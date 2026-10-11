@@ -264,26 +264,71 @@ def _load_proxy_and_tls(cfg):
     _tls_cfg["hosts"] = w.get("tls_hosts") or []
 
 
+# 本機連線卻帶著代理才會加的標頭、代理又不在 trusted_proxies：真正的客戶端在哪裡不知道（2026-10-11，合規頁外部審查）。
+# 以前這種請求的來源就是 127.0.0.1＝本機：不用密碼、僅限本機的設定頁也打得開（只靠手冊提醒要設 trusted_proxies）。
+# 回這個值：不在本機清單裡（_is_local 為假）、也不是 IP（設了 allowed_ips 時 _ip_allowed 擋下）
+_PROXIED_UNKNOWN = "unknown-behind-untrusted-proxy"
+_PROXY_HEADERS = ("x-forwarded-for", "x-real-ip", "forwarded")
+_proxy_warned = [False]
+
+
+def _forwarded_for(value):
+    """RFC 7239 Forwarded 標頭最後一個 for=（離我們最近的一跳）：去掉引號、IPv6 的中括號與連接埠"""
+    hops = [m for m in re.findall(r'for\s*=\s*("[^"]*"|[^;,\s]+)', value or "", re.I)]
+    if not hops:
+        return ""
+    v = hops[-1].strip('"')
+    if v.startswith("["):
+        return v[1:v.index("]")] if "]" in v else v[1:]
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
 def _client_ip(request) -> str:
-    """真正的客戶端位址。只有連線來自信任的代理時才看 X-Forwarded-For。"""
+    """真正的客戶端位址。只有連線來自信任的代理時才看 X-Forwarded-For（沒有時看 X-Real-IP、Forwarded）。"""
     peer = request.client.host if request.client else ""
-    if not _trusted_proxies or not peer:
+    if not peer:
         return peer
     import ipaddress
     try:
-        if not any(ipaddress.ip_address(peer) in n for n in _trusted_proxies):
-            return peer          # 不是從信任的代理來的，XFF 一律不採信
+        trusted = any(ipaddress.ip_address(peer) in n for n in _trusted_proxies)
     except ValueError:
         return peer
+    if not trusted:
+        if peer in ("127.0.0.1", "::1") and any(request.headers.get(h) for h in _PROXY_HEADERS):
+            if not _proxy_warned[0]:
+                _proxy_warned[0] = True
+                print(f"[WebUI] 注意：收到經反向代理轉來的請求（帶有 X-Forwarded-For 等標頭），但代理（{peer}）沒有列在 "
+                      f"webui.trusted_proxies：這類請求一律當成遠端（要密碼、僅限本機的設定頁不開；設了允許清單時拒絕）。"
+                      f"請把代理的位址加進 config.json 的 webui.trusted_proxies", flush=True)
+            return _PROXIED_UNKNOWN
+        return peer              # 不是從信任的代理來的，XFF 一律不採信
     xff = request.headers.get("x-forwarded-for", "")
-    # 由右往左找第一個不是信任代理的位址——左邊的可以被客戶端偽造
-    for part in reversed([x.strip() for x in xff.split(",") if x.strip()]):
-        try:
-            if not any(ipaddress.ip_address(part) in n for n in _trusted_proxies):
-                return part
-        except ValueError:
-            continue
+    if xff:
+        # 由右往左找第一個不是信任代理的位址——左邊的可以被客戶端偽造
+        for part in reversed([x.strip() for x in xff.split(",") if x.strip()]):
+            try:
+                if not any(ipaddress.ip_address(part) in n for n in _trusted_proxies):
+                    return _header_ip(part, peer)
+            except ValueError:
+                continue
+        return peer
+    # 沒有 X-Forwarded-For 的代理（nginx 只設 X-Real-IP、或只送 RFC 7239 Forwarded）：以前會退回代理自己的位址＝本機
+    for cand in (request.headers.get("x-real-ip", "").strip(), _forwarded_for(request.headers.get("forwarded", ""))):
+        if cand:
+            try:
+                ipaddress.ip_address(cand)
+                return _header_ip(cand, peer)
+            except ValueError:
+                return _PROXIED_UNKNOWN
     return peer
+
+
+def _header_ip(ip, peer):
+    """從標頭拿到的位址：只有連線本身也來自本機時才可以是本機位址。
+    代理把客戶端自己送的標頭原封轉過來時（nginx 沒設 proxy_set_header 就會），客戶端填 127.0.0.1 就能假裝在本機"""
+    if ip in ("127.0.0.1", "::1", "localhost") and peer not in ("127.0.0.1", "::1"):
+        return _PROXIED_UNKNOWN
+    return ip
 
 
 def _ip_allowed(client) -> bool:
@@ -983,7 +1028,7 @@ def _get_config():
         ]
     engines = [
         {"value": "llm", "label": "LLM — 品質最好，需 LLM 伺服器"},
-        {"value": "nllb", "label": "NLLB — 本機離線，中日韓英互譯"},
+        {"value": "nllb", "label": "NLLB — 本機離線，中日韓英互譯（模型非商業授權）"},
         {"value": "argos", "label": "Argos — 本機離線，僅英翻中"},
     ]
     # LLM 翻譯模型清單
@@ -1060,7 +1105,7 @@ def _get_config():
         "default_engine": "llm" if llm_host else "nllb",
         "sck": sck, "is_macos": sys.platform == "darwin",
         "is_linux": sys.platform.startswith("linux"),
-        "last": last, "version": "2.31.0",
+        "last": last, "version": "2.31.1",
         # 網頁需要的後端功能等級：只換了檔案、WebUI 沒重開時，新網頁會連到舊後端（2026-10-09 Mac 實際發生：
         # 「無法取得文字轉語音狀態」）。網頁發現等級不夠就請使用者重新啟動 WebUI，不會亂報錯
         "api_level": 2,

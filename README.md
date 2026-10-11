@@ -1,4 +1,4 @@
-# jt-live-whisper v2.31.0
+# jt-live-whisper v2.31.1
 
 **100% 全地端 AI 語音工具箱**：即時轉錄、即時翻譯、錄音檔批次處理、講者辨識、會議摘要、台灣華語朗讀，所有 AI 模型皆在自有設備上執行，資料不經過任何雲端服務。
 
@@ -46,21 +46,24 @@ Author: Jason Cheng (Jason Tools)
 
 ## 使用的 AI 模型
 
-| 用途 | AI 模型 | 說明 |
-|------|---------|------|
-| 語音辨識 (ASR) | **Whisper** (OpenAI) | **多語（中日韓英）** 主力辨識模型；base / small / large-v3-turbo / large-v3 可選 |
-| 語音辨識 (ASR) | **Breeze-ASR-26** (MediaTek Research) | **台語（台灣閩南語）專用**，華語模式也可選用（台灣華語夾雜台語時）；Whisper large-v2 微調，直接輸出漢字 |
-| 語音辨識 (ASR) | **Moonshine** (Useful Sensors) | **英文專用**，超低延遲串流辨識模型（不支援 Intel Mac） |
-| 語音辨識 (ASR) | **Qwen3-ASR 0.6B** (Alibaba Qwen) | **實驗選項（v2.23.0）**：離線處理錄音檔時選用，中文會議與中英夾雜明顯更準（中文真實會議 20 場字錯率 28.78% → 15.75%）；限中文／英文／韓文。GPU 伺服器或本機（v2.24.0 起：Apple Silicon、NVIDIA、CPU）執行 |
-| 翻譯 (LLM) | 自架 LLM 伺服器，預設 **gemma4:26b**（伺服器沒有時改用 qwen2.5:14b） | 即時與離線翻譯，透過地端 Ollama 或其他 LLM 伺服器執行；建議 14B 以上，並**選用不會思考、或思考可關閉的模型**，程式會自動關閉思考模式（gemma4、qwen3 等皆可），但 gpt-oss 系列架構上必定推理、關不掉，用於即時翻譯會明顯變慢 |
-| 摘要 / 逐字稿校正 (LLM) | 自架 LLM 伺服器，預設 **qwen3.8:27b** | 會議摘要與逐字稿校正（兩者共用同一個模型）；建議 27B 以上，可與翻譯用不同模型 |
-| 翻譯 (離線) | **NLLB 600M** (Meta) | 離線翻譯模型，支援中日韓英互譯（`en2zh`/`zh2en`/`ja2zh`/`zh2ja`/`ko2zh`/`zh2ko`） |
-| 翻譯 (離線備援) | **Argos Translate** | 完全離線的輕量翻譯模型，僅支援英翻中 |
-| 講者辨識 | **resemblyzer** + **spectralcluster** | 聲紋特徵提取 + Google 頻譜分群演算法，可在本機或 GPU 伺服器執行 |
-| 講者辨識 | **Nemotron 3 Diarization** (NVIDIA，OpenMDW-1.1) | **v2.26.0 起預設使用**（transformers 5.18 以上，安裝程式自動安裝並下載模型 0.71 GB）；Intel Mac、超過 8 人時沿用上一列的方法 |
-| 語音合成 (TTS) | **VoxCPM2** (OpenBMB，Apache-2.0) | **v2.27.0 起**：把文字念成台灣華語；內建 8 個 AI 產生的聲音（不是真人錄音），也可以匯入自己的台灣華語錄音。GPU 伺服器或 Apple Silicon Mac（MLX 8bit） |
-| 語音合成 (TTS，選用) | **BreezyVoice** (MediaTek，Apache-2.0) | 台灣口音，但合成速度慢，不適合即時；只在 GPU 伺服器，安裝時問要不要加裝（預設否） |
-| 破音字判斷 | **g2pW**（Apache-2.0）＋教育部《重編國語辭典修訂本》 | 朗讀時判斷台灣念法（辭典資料安裝時下載，著作權屬教育部，CC BY-ND 3.0 TW） |
+| 用途 | AI 模型 | 說明 | 授權 |
+|------|---------|------|------|
+| 語音辨識 (ASR) | **Whisper** (OpenAI) | **多語（中日韓英）** 主力辨識模型；base / small / large-v3-turbo / large-v3 可選 | MIT |
+| 語音辨識 (ASR) | **Breeze-ASR-26** (MediaTek Research) | **台語（台灣閩南語）專用**，華語模式也可選用（台灣華語夾雜台語時）；Whisper large-v2 微調，直接輸出漢字 | Apache-2.0 |
+| 語音辨識 (ASR) | **Moonshine** (Useful Sensors) | **英文專用**，超低延遲串流辨識模型（不支援 Intel Mac） | MIT |
+| 語音辨識 (ASR) | **Qwen3-ASR 0.6B** (Alibaba Qwen) | **實驗選項（v2.23.0）**：離線處理錄音檔時選用，中文會議與中英夾雜明顯更準（中文真實會議 20 場字錯率 28.78% → 15.75%）；限中文／英文／韓文。GPU 伺服器或本機（v2.24.0 起：Apple Silicon、NVIDIA、CPU）執行 | Apache-2.0 |
+| 翻譯 (LLM) | 自架 LLM 伺服器，預設 **gemma4:26b**（伺服器沒有時改用 qwen2.5:14b） | 即時與離線翻譯，透過地端 Ollama 或其他 LLM 伺服器執行；建議 14B 以上，並**選用不會思考、或思考可關閉的模型**，程式會自動關閉思考模式（gemma4、qwen3 等皆可），但 gpt-oss 系列架構上必定推理、關不掉，用於即時翻譯會明顯變慢 | 依選用的模型；預設 gemma4:26b、qwen2.5:14b 為 Apache-2.0 |
+| 摘要 / 逐字稿校正 (LLM) | 自架 LLM 伺服器，預設 **qwen3.8:27b** | 會議摘要與逐字稿校正（兩者共用同一個模型）；建議 27B 以上，可與翻譯用不同模型 | 依選用的模型；預設 qwen3.8:27b 為 Apache-2.0 |
+| 翻譯 (離線) | **NLLB 600M** (Meta) | 離線翻譯模型，支援中日韓英互譯（`en2zh`/`zh2en`/`ja2zh`/`zh2ja`/`ko2zh`/`zh2ko`） | **CC-BY-NC-4.0（僅限非商業用途）** |
+| 翻譯 (離線備援) | **Argos Translate** | 完全離線的輕量翻譯模型，僅支援英翻中 | 程式 MIT；英翻中模型 CC-BY 4.0（源自 OPUS-MT） |
+| 講者辨識 | **resemblyzer** + **spectralcluster** | 聲紋特徵提取 + Google 頻譜分群演算法，可在本機或 GPU 伺服器執行 | Apache-2.0 |
+| 講者辨識 | **Nemotron 3 Diarization** (NVIDIA) | **v2.26.0 起預設使用**（transformers 5.18 以上，安裝程式自動安裝並下載模型 0.71 GB）；Intel Mac、超過 8 人時沿用上一列的方法 | OpenMDW-1.1 |
+| 語音合成 (TTS) | **VoxCPM2** (OpenBMB) | **v2.27.0 起**：把文字念成台灣華語；內建 8 個 AI 產生的聲音（不是真人錄音），也可以匯入自己的台灣華語錄音。GPU 伺服器或 Apple Silicon Mac（MLX 8bit） | Apache-2.0 |
+| 語音合成 (TTS，選用) | **BreezyVoice** (MediaTek) | 台灣口音，但合成速度慢，不適合即時；只在 GPU 伺服器，安裝時問要不要加裝（預設否） | Apache-2.0 |
+| 破音字判斷 | **g2pW**＋教育部《重編國語辭典修訂本》 | 朗讀時判斷台灣念法（辭典資料安裝時下載，著作權屬教育部） | g2pW Apache-2.0；辭典 CC BY-ND 3.0 TW |
+
+授權是 2026 年 10 月查證時的狀態，以各模型的頁面為準。**NLLB 600M 僅限非商業用途**：企業或組織使用前請自行確認是否符合授權條款（不要預設內部使用就算非商業），或改用 LLM 伺服器翻譯。
+
 
 所有模型皆在自有設備上推論（本機或區域網路內的 GPU 伺服器），**不需要任何第三方雲端 API**。
 
@@ -306,7 +309,7 @@ WebUI「輸入來源」選「**文字內容朗讀**」：貼上文字或選文�
 - 安裝腳本會以 `sudo apt` 自動補齊 ffmpeg、PortAudio、pulseaudio-utils、中文字型等系統套件
 
 **共通：**
-- 本地端 LLM 伺服器（推薦 [Ollama](https://ollama.com/)，翻譯/摘要用。推薦搭配 [NVIDIA DGX Spark](https://www.nvidia.com/zh-tw/products/workstations/dgx-spark/) 執行 Ollama，CP 值高。**沒有 LLM 伺服器也能用**：程式可切換為 NLLB/Argos 離線翻譯引擎，完全不需額外伺服器，但摘要功能需要 LLM）
+- 本地端 LLM 伺服器（推薦 [Ollama](https://ollama.com/)，翻譯/摘要用。推薦搭配 [NVIDIA DGX Spark](https://www.nvidia.com/zh-tw/products/workstations/dgx-spark/) 執行 Ollama，CP 值高。**沒有 LLM 伺服器也能用**：程式可切換為 NLLB（模型僅限非商業用途）/Argos 離線翻譯引擎，完全不需額外伺服器，但摘要功能需要 LLM）
 
 ### 磁碟空間需求
 
@@ -320,7 +323,7 @@ WebUI「輸入來源」選「**文字內容朗讀**」：貼上文字或選文�
 | whisper.cpp | ~60 MB | macOS: 原始碼編譯；Windows: 原始碼編譯（選用，沒有時即時辨識改用 faster-whisper）；Linux: 不需要（改用 faster-whisper） |
 | Whisper GGML 模型 | 1.5~6.4 GB | 預設 large-v3-turbo (1.5GB)；全部 5 個模型共 6.4 GB |
 | Moonshine 模型 | ~245 MB | 英文即時辨識（選用） |
-| NLLB 600M 翻譯模型 | ~600 MB | 離線翻譯（中日韓英互譯） |
+| NLLB 600M 翻譯模型 | ~600 MB | 離線翻譯（中日韓英互譯，CC-BY-NC 4.0 非商業授權） |
 | Argos 翻譯模型 | ~83 MB | 離線備援翻譯（僅英翻中） |
 | Homebrew 套件 | ~140 MB | cmake + sdl2 + ffmpeg（僅 macOS） |
 | HuggingFace 快取 | ~5.3 GB | `~/.cache/huggingface/`，`--input` 離線處理用，首次使用時下載 |
@@ -523,7 +526,7 @@ ollama pull gemma4:26b      # 預設翻譯模型（約 17GB；記憶體不足可
 
 > **推薦硬體：** 如果有 [NVIDIA DGX Spark](https://www.nvidia.com/zh-tw/products/workstations/dgx-spark/)（128GB 記憶體），將 Ollama 安裝在 DGX Spark 上是非常實惠的選擇：可執行更大的模型、翻譯品質更好、推論速度更快，透過 `--llm-host` 指向即可。
 
-> **不裝 LLM 也能翻譯：** 程式可切換為 NLLB（中日韓英互譯，品質 7-8/10）或 Argos（僅英翻中）離線翻譯引擎，完全不需要額外伺服器。注意：摘要功能仍需 LLM 伺服器。
+> **不裝 LLM 也能翻譯：** 程式可切換為 NLLB（中日韓英互譯，品質 7-8/10；**模型僅限非商業用途**）或 Argos（僅英翻中）離線翻譯引擎，完全不需要額外伺服器。注意：摘要功能仍需 LLM 伺服器。
 
 ### 4. 啟動
 
@@ -1020,7 +1023,9 @@ cd C:\jt-live-whisper
 
 ## License
 
-本專案採用 [Apache License 2.0](LICENSE) 授權。
+本專案的程式碼採用 [Apache License 2.0](LICENSE) 授權。
+
+使用的模型各有自己的授權（見[使用的 AI 模型](#使用的-ai-模型)表的「授權」欄），都在安裝或第一次用到時下載，不隨本專案散布。**離線翻譯的 [NLLB 600M](https://huggingface.co/facebook/nllb-200-distilled-600M) 是 CC-BY-NC-4.0，僅限非商業用途**；企業或組織使用前請自行確認授權條款，或改用 LLM 伺服器翻譯。
 
 講者辨識預設使用的 [NVIDIA Nemotron 3 Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) 模型採 OpenMDW-1.1 授權，
 安裝時從 HuggingFace 下載（不需帳號），不隨本專案散布。

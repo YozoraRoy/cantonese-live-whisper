@@ -761,7 +761,7 @@ $banner_line = '=' * $cols
 if (-not $env:JTLW_UPGRADE_REPO) {          # 升級時交給新版接手的那一次不再印標題（同一個畫面）
 Write-Host ""
 Write-Host "${C_TITLE}${banner_line}${NC}"
-Write-Host "${C_TITLE}${BOLD}  jt-live-whisper v2.31.0 - 100% 全地端 AI 語音工具箱 - Windows 安裝程式${NC}"
+Write-Host "${C_TITLE}${BOLD}  jt-live-whisper v2.31.1 - 100% 全地端 AI 語音工具箱 - Windows 安裝程式${NC}"
 Write-Host "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
 Write-Host "${C_TITLE}${banner_line}${NC}"
 Write-Host ""
@@ -1651,7 +1651,7 @@ except: print('FAIL')
 # 4b. 下載 NLLB 離線翻譯模型（中日韓英互譯，CC-BY-NC 4.0 授權）
 # ═══════════════════════════════════════════════════════════════
 
-section "下載 NLLB 離線翻譯模型（中日韓英互譯）"
+section "下載 NLLB 離線翻譯模型（中日韓英互譯，CC-BY-NC 4.0 非商業授權）"
 
 $NLLB_MODEL_DIR = Join-Path $env:LOCALAPPDATA "jt-live-whisper\models\nllb-600m"
 
@@ -3299,7 +3299,7 @@ $features = @(
     @{ OK = $fwModelOk;                        Desc = "Whisper 模型 large-v3-turbo"; Engine = "faster-whisper 格式" },
     @{ OK = ((nemo_tf_ok) -or (venv_import_ok "resemblyzer")); Desc = "AI 講者辨識 (--diarize)"; Engine = $(if (nemo_tf_ok) { "Nemotron（resemblyzer 備援）" } else { "resemblyzer" }) },
     @{ OK = (venv_import_ok "argostranslate"); Desc = "Argos 離線翻譯";          Engine = "僅英翻中" },
-    @{ OK = (Test-Path (Join-Path $env:LOCALAPPDATA "jt-live-whisper\models\nllb-600m\model.bin")); Desc = "NLLB 離線翻譯"; Engine = "中日韓英互譯" },
+    @{ OK = (Test-Path (Join-Path $env:LOCALAPPDATA "jt-live-whisper\models\nllb-600m\model.bin")); Desc = "NLLB 離線翻譯"; Engine = "中日韓英互譯，模型非商業授權" },
     @{ OK = (venv_import_ok "moonshine_voice");      Desc = "Moonshine 即時辨識";       Engine = "英文低延遲" },
     @{ OK = (qwen_tf_ok);                            Desc = "Qwen3-ASR 本機辨識（實驗）"; Engine = "離線中英韓，transformers" }
 )

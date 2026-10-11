@@ -2685,7 +2685,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.31.0"
+APP_VERSION = "2.31.1"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -6595,7 +6595,7 @@ def select_translator(init_host=None, init_port=None, mode="en2zh"):
             _argos_ok = mode == "en2zh" and os.path.isdir(ARGOS_PKG_PATH)
             _offline_opts = []
             if _nllb_ok:
-                _offline_opts.append(("NLLB 本機離線", "支援中日韓英，品質一般", "nllb"))
+                _offline_opts.append(("NLLB 本機離線", "支援中日韓英，品質一般；模型非商業授權（CC-BY-NC 4.0）", "nllb"))
             if _argos_ok:
                 _offline_opts.append(("Argos 本機離線", "僅英翻中，品質一般", "argos"))
             if len(_offline_opts) == 0:
@@ -6653,7 +6653,7 @@ def select_translator(init_host=None, init_port=None, mode="en2zh"):
         for model_name in sorted(available_models):
             options.append((model_name, "", "llm", model_name))
     if os.path.isdir(NLLB_MODEL_DIR):
-        options.append(("NLLB 本機離線", "支援中日韓英，品質一般，免 LLM 伺服器", "nllb", None))
+        options.append(("NLLB 本機離線", "支援中日韓英，品質一般，免 LLM 伺服器；模型非商業授權（CC-BY-NC 4.0）", "nllb", None))
     if mode == "en2zh" and os.path.isdir(ARGOS_PKG_PATH):
         options.append(("Argos 本機離線", "僅英翻中，品質一般，免 LLM 伺服器", "argos", None))
 
@@ -7042,7 +7042,7 @@ def _input_interactive_menu(args):
                 else:
                     print(f"{C_HIGHLIGHT}未偵測到 LLM 伺服器（{ollama_host}:{ollama_port}）{RESET}")
                     if os.path.isdir(NLLB_MODEL_DIR):
-                        print(f"  {C_OK}→ 改用 NLLB 本機離線翻譯{RESET}")
+                        print(f"  {C_OK}→ 改用 NLLB 本機離線翻譯（模型為非商業授權 CC-BY-NC 4.0）{RESET}")
                         _use_nllb = True
                     elif mode_key == "en2zh" and os.path.isdir(ARGOS_PKG_PATH):
                         print(f"  {C_OK}→ 改用 Argos 本機離線翻譯{RESET}")
@@ -7052,7 +7052,7 @@ def _input_interactive_menu(args):
             else:
                 llm_models = []
                 if os.path.isdir(NLLB_MODEL_DIR):
-                    print(f"  {C_OK}→ NLLB 本機離線翻譯{RESET}")
+                    print(f"  {C_OK}→ NLLB 本機離線翻譯（模型為非商業授權 CC-BY-NC 4.0）{RESET}")
                     _use_nllb = True
                 elif mode_key == "en2zh" and os.path.isdir(ARGOS_PKG_PATH):
                     print(f"  {C_OK}→ Argos 本機離線翻譯{RESET}")
@@ -7082,7 +7082,7 @@ def _input_interactive_menu(args):
 
                 # 加入本機離線翻譯選項
                 if os.path.isdir(NLLB_MODEL_DIR):
-                    translate_models.append(("NLLB 本機離線翻譯", "支援中日韓英互譯，免 LLM 伺服器", "nllb"))
+                    translate_models.append(("NLLB 本機離線翻譯", "支援中日韓英互譯，免 LLM 伺服器；模型非商業授權（CC-BY-NC 4.0）", "nllb"))
                 if mode_key == "en2zh" and os.path.isdir(ARGOS_PKG_PATH):
                     translate_models.append(("Argos 本機離線翻譯", "僅英翻中，免 LLM 伺服器", "argos"))
 
@@ -18446,7 +18446,7 @@ def parse_args():
         help="音訊裝置 ID (數字，可用 --list-devices 查詢)")
     parser.add_argument(
         "-e", "--engine", choices=["llm", "argos", "nllb"], metavar="ENGINE",
-        help="翻譯引擎 (llm / argos / nllb)")
+        help="翻譯引擎 (llm / argos / nllb；nllb 的模型為非商業授權 CC-BY-NC 4.0)")
     parser.add_argument(
         "--llm-model", metavar="NAME", dest="ollama_model",
         help=f"LLM 翻譯模型名稱 (預設 {DEFAULT_TRANSLATE_MODEL}，伺服器沒有時改用 qwen2.5:14b)")
@@ -19138,7 +19138,7 @@ def main():
             elif engine == "llm" and not ollama_available:
                 # LLM 伺服器連不上：降級處理
                 if os.path.isdir(NLLB_MODEL_DIR):
-                    print(f"  {C_HIGHLIGHT}[降級] 改用 NLLB 離線翻譯（品質較低）{RESET}")
+                    print(f"  {C_HIGHLIGHT}[降級] 改用 NLLB 離線翻譯（品質較低；模型為非商業授權 CC-BY-NC 4.0）{RESET}")
                     translator = NllbTranslator(direction=_trans_dir)
                 elif _trans_dir == "en2zh" and os.path.isdir(ARGOS_PKG_PATH):
                     print(f"  {C_HIGHLIGHT}[降級] 改用 Argos 離線翻譯（品質較低）{RESET}")

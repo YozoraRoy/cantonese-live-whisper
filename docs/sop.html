@@ -138,7 +138,7 @@
   </aside>
   <article class="doc-body md">
 <h1 id="jt-live-whisper-安裝與使用-sop">jt-live-whisper 安裝與使用 SOP</h1>
-<p>即時英翻中字幕系統 v2.31.0 (by Jason Cheng)</p>
+<p>即時英翻中字幕系統 v2.31.1 (by Jason Cheng)</p>
 <table>
 <thead>
 <tr>
@@ -284,59 +284,71 @@ translate_meeting.py                            remote_whisper_server.py (FastAP
 <th>用途</th>
 <th>AI 模型</th>
 <th>說明</th>
+<th>授權</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>語音辨識</td>
 <td><strong>Whisper</strong> (OpenAI)</td>
 <td><strong>多語（中日韓英）</strong> 主力辨識模型；base / small / large-v3-turbo / large-v3 可選</td>
+<td>MIT</td>
 </tr>
 <tr>
 <td>語音辨識</td>
 <td><strong>Breeze-ASR-26</strong> (MediaTek Research)</td>
 <td><strong>台語（台灣閩南語）專用</strong>，華語模式也可選用（台灣華語夾雜台語時）；Whisper large-v2 微調，結果直接輸出漢字，不需另外翻譯</td>
+<td>Apache-2.0</td>
 </tr>
 <tr>
 <td>語音辨識</td>
 <td><strong>Moonshine</strong> (Useful Sensors)</td>
 <td><strong>英文專用</strong>，超低延遲串流辨識模型（不支援 Intel Mac）</td>
+<td>MIT</td>
 </tr>
 <tr>
 <td>語音辨識</td>
 <td><strong>Qwen3-ASR 0.6B</strong> (Alibaba Qwen)</td>
 <td><strong>實驗選項（v2.23.0 起）</strong>：離線處理錄音檔時選用，中文會議與中英夾雜明顯更準；限中文／英文／韓文輸入。GPU 伺服器（v2.23.0）或本機（v2.24.0 起：Apple Silicon、NVIDIA、CPU）執行，見「Qwen3-ASR（實驗）」</td>
+<td>Apache-2.0</td>
 </tr>
 <tr>
 <td>講者辨識</td>
 <td><strong>resemblyzer</strong> + <strong>spectralcluster</strong></td>
 <td>聲紋特徵提取 + 頻譜分群，可在本機或 GPU 伺服器執行</td>
+<td>Apache-2.0</td>
 </tr>
 <tr>
 <td>講者辨識</td>
 <td><strong>Nemotron 3 Diarization</strong> (NVIDIA)</td>
 <td><strong>v2.26.0 起預設使用</strong>（transformers 5.18 以上；安裝程式會自動安裝並下載模型 0.71 GB）。Intel Mac、超過 8 人時改用上一列的方法</td>
+<td>OpenMDW-1.1</td>
 </tr>
 <tr>
 <td>翻譯 (LLM)</td>
 <td>自架 LLM 伺服器，預設 <strong>gemma4:26b</strong>（伺服器沒有時改用 qwen2.5:14b）</td>
 <td>即時與離線翻譯（本機或區域網路 LLM 伺服器）；建議 14B 以上，並<strong>選用不會思考、或思考可關閉的模型</strong>，程式會自動關閉思考模式（gemma4、qwen3 等皆可），但 gpt-oss 系列架構上必定推理、關不掉，用於即時翻譯會明顯變慢</td>
+<td>依選用的模型；預設 gemma4:26b、qwen2.5:14b 為 Apache-2.0</td>
 </tr>
 <tr>
 <td>摘要 / 逐字稿校正 (LLM)</td>
 <td>自架 LLM 伺服器，預設 <strong>qwen3.8:27b</strong></td>
 <td>會議摘要與逐字稿校正（兩者共用同一個模型）；建議 27B 以上，可與翻譯用不同模型</td>
+<td>依選用的模型；預設 qwen3.8:27b 為 Apache-2.0</td>
 </tr>
 <tr>
 <td>翻譯 (離線)</td>
 <td><strong>NLLB 600M</strong> (Meta)</td>
 <td>離線翻譯，支援中日韓英互譯，僅限本機</td>
+<td><strong>CC-BY-NC-4.0（僅限非商業用途）</strong></td>
 </tr>
 <tr>
 <td>翻譯 (離線備援)</td>
 <td><strong>Argos Translate</strong></td>
 <td>完全離線的輕量翻譯模型，僅支援英翻中</td>
+<td>程式 MIT；英翻中模型 CC-BY 4.0（源自 OPUS-MT）</td>
 </tr>
 </tbody></table>
+<p>授權是 2026 年 10 月查證時的狀態，以各模型的頁面為準。<strong>NLLB 600M 僅限非商業用途</strong>：企業或組織使用前請自行確認是否符合授權條款（不要預設內部使用就算非商業），或改用 LLM 伺服器翻譯。</p>
 <p>語音辨識的推論引擎（同一個模型可跑在不同引擎上，程式依平台與音訊來源自動選擇）：</p>
 <table>
 <thead>
@@ -811,7 +823,7 @@ bash install.sh --server
 </tr>
 <tr>
 <td>NLLB 600M 翻譯模型</td>
-<td>離線翻譯模型，中日韓英互譯 (~600MB)</td>
+<td>離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權</td>
 </tr>
 <tr>
 <td>Argos 翻譯模型</td>
@@ -852,7 +864,7 @@ bash install.sh --server
 </tr>
 <tr>
 <td>NLLB 600M 翻譯模型</td>
-<td>離線翻譯模型，中日韓英互譯 (~600MB)</td>
+<td>離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權</td>
 </tr>
 <tr>
 <td>Argos 翻譯模型</td>
@@ -889,7 +901,7 @@ bash install.sh --server
 </tr>
 <tr>
 <td>NLLB 600M 翻譯模型</td>
-<td>離線翻譯模型，中日韓英互譯 (~600MB)</td>
+<td>離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權</td>
 </tr>
 <tr>
 <td>Argos 翻譯模型</td>
@@ -2397,7 +2409,7 @@ v2.27.0 起安裝程式（含 <code>-Upgrade</code>）在 Windows 預設狀態�
 </tr>
 <tr>
 <td>NLLB 本機離線翻譯</td>
-<td>支援中日韓英互譯，免 LLM 伺服器（CC-BY-NC 4.0 授權）</td>
+<td>支援中日韓英互譯，免 LLM 伺服器（CC-BY-NC 4.0 非商業授權）</td>
 </tr>
 <tr>
 <td>Argos 本機離線翻譯</td>
@@ -3170,13 +3182,22 @@ GPU 伺服器的程式比較舊時，安裝程式會說明先更新伺服器（�
 <li>排除憑證問題時可用 <code>./start.sh --webui --no-tls</code> 強制走 HTTP</li>
 </ul>
 <h4 id="放在反向代理nginx-caddy後面">放在反向代理（nginx / Caddy）後面</h4>
-<p><strong>預設完全不信任 <code>X-Forwarded-For</code>。</strong> 不設定的話，代理後面的每個請求
-看起來都來自代理本身＝本機，那四個「僅限本機」的設定頁就等於對全世界開放。</p>
-<p>要用代理必須明確指定代理的位址：</p>
+<p><strong>預設完全不信任 <code>X-Forwarded-For</code>。</strong> 代理後面的每個請求，連線來源都是代理本身；
+代理跟 WebUI 在同一台時就是 127.0.0.1＝本機。要用代理必須明確指定代理的位址：</p>
 <pre><code class="language-json">&quot;webui&quot;: { &quot;trusted_proxies&quot;: [&quot;127.0.0.1&quot;, &quot;10.0.0.5&quot;] }
 </code></pre>
-<p>只有來自清單內的連線才會去看 <code>X-Forwarded-For</code>，而且取的是<strong>最右邊那個
-非信任的跳點</strong>：最左邊是客戶端自己填的，可以偽造。</p>
+<p>並讓代理送出 <code>X-Forwarded-For</code>（Caddy、Apache、Traefik 預設就會送；nginx 要加）：</p>
+<pre><code class="language-nginx">proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+</code></pre>
+<ul>
+<li>只有來自清單內的連線才會去看 <code>X-Forwarded-For</code>，而且取的是<strong>最右邊那個非信任的跳點</strong>：最左邊是客戶端自己填的，可以偽造。
+沒有 <code>X-Forwarded-For</code> 時改看 <code>X-Real-IP</code>、<code>Forwarded</code></li>
+<li>標頭裡的本機位址（127.0.0.1）只有在連線本身也來自本機時才算：遠端的代理把客戶端偽造的標頭原封轉來，不會被當成本機</li>
+<li><strong>沒設 <code>trusted_proxies</code> 時（v2.31.1 起）</strong>：同一台代理轉來、帶著轉送標頭（<code>X-Forwarded-For</code>、<code>X-Real-IP</code>、<code>Forwarded</code>）的請求一律當成遠端：
+要密碼、四個「僅限本機」的設定頁不開、設了 <code>allowed_ips</code> 時拒絕（不知道真正的來源），WebUI 終端機會提示一次。
+以前這種請求都被當成本機（不用密碼、僅限本機的設定頁也打得開）</li>
+<li><strong>代理完全不加轉送標頭時（nginx 只寫 <code>proxy_pass</code>）程式分不出請求是從代理來的，仍會被當成本機</strong>，所以一定要照上面設定</li>
+</ul>
 <blockquote>
 <p>⚠ <strong><code>webui.allowed_ips</code> 與 <code>api.allowed_hosts</code> 是兩件不同的事</strong>，名字很像但意思相反：</p>
 <table>

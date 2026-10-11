@@ -305,6 +305,16 @@ footer a{color:#7fd3ff}
 @media(max-width:480px){.hero h1.rot{font-size:28px}body.lang-en .hero h1.rot{font-size:26px}}
 @media(prefers-reduced-motion:reduce){.rot-item{transition:none;transform:none}}
 
+/* 合規頁的兩欄表（資料位置、會連到外部的情況、模型授權；2026-10-11）：第一欄是長的項目名稱，要能換行；手機改成每列一張卡片（項目在上、內容在下），不用左右滑 */
+table.kv{min-width:0}
+table.kv td:first-child{white-space:normal;width:38%}
+@media(max-width:680px){
+  table.kv thead{display:none}
+  table.kv tr{display:block;padding:12px 16px;border-bottom:1px solid var(--line)}
+  table.kv tr:last-child{border-bottom:none}
+  table.kv td,table.kv td:first-child{display:block;width:auto;padding:0;border:none}
+  table.kv td+td{margin-top:4px;color:var(--muted)}
+}
 /* 合規頁的 ISO 對照表（2026-10-10）：第一欄是「編號＋名稱」，要能換行；英文正式名稱小字另起一行 */
 table.iso{min-width:760px}
 table.iso td:first-child{white-space:normal;width:26%;min-width:190px}

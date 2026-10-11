@@ -1,6 +1,6 @@
 # jt-live-whisper 安裝與使用 SOP
 
-即時英翻中字幕系統 v2.31.0 (by Jason Cheng)
+即時英翻中字幕系統 v2.31.1 (by Jason Cheng)
 
 | **目錄** | [系統架構](#一系統架構) · [音訊設定](#二事前準備音訊設定) · [安裝程式](#三安裝程式) · [啟動與使用](#四啟動與使用) · [REST API](#五rest-api給其他系統串接) · [使用流程總結](#六使用流程總結) · [常見問題](#七常見問題) · [檔案說明](#八檔案說明) · [硬體建議](#硬體建議) |
 |---|---|
@@ -95,18 +95,21 @@ translate_meeting.py                            remote_whisper_server.py (FastAP
 
 使用的 AI 模型：
 
-| 用途 | AI 模型 | 說明 |
-|------|---------|------|
-| 語音辨識 | **Whisper** (OpenAI) | **多語（中日韓英）** 主力辨識模型；base / small / large-v3-turbo / large-v3 可選 |
-| 語音辨識 | **Breeze-ASR-26** (MediaTek Research) | **台語（台灣閩南語）專用**，華語模式也可選用（台灣華語夾雜台語時）；Whisper large-v2 微調，結果直接輸出漢字，不需另外翻譯 |
-| 語音辨識 | **Moonshine** (Useful Sensors) | **英文專用**，超低延遲串流辨識模型（不支援 Intel Mac） |
-| 語音辨識 | **Qwen3-ASR 0.6B** (Alibaba Qwen) | **實驗選項（v2.23.0 起）**：離線處理錄音檔時選用，中文會議與中英夾雜明顯更準；限中文／英文／韓文輸入。GPU 伺服器（v2.23.0）或本機（v2.24.0 起：Apple Silicon、NVIDIA、CPU）執行，見「Qwen3-ASR（實驗）」 |
-| 講者辨識 | **resemblyzer** + **spectralcluster** | 聲紋特徵提取 + 頻譜分群，可在本機或 GPU 伺服器執行 |
-| 講者辨識 | **Nemotron 3 Diarization** (NVIDIA) | **v2.26.0 起預設使用**（transformers 5.18 以上；安裝程式會自動安裝並下載模型 0.71 GB）。Intel Mac、超過 8 人時改用上一列的方法 |
-| 翻譯 (LLM) | 自架 LLM 伺服器，預設 **gemma4:26b**（伺服器沒有時改用 qwen2.5:14b） | 即時與離線翻譯（本機或區域網路 LLM 伺服器）；建議 14B 以上，並**選用不會思考、或思考可關閉的模型**，程式會自動關閉思考模式（gemma4、qwen3 等皆可），但 gpt-oss 系列架構上必定推理、關不掉，用於即時翻譯會明顯變慢 |
-| 摘要 / 逐字稿校正 (LLM) | 自架 LLM 伺服器，預設 **qwen3.8:27b** | 會議摘要與逐字稿校正（兩者共用同一個模型）；建議 27B 以上，可與翻譯用不同模型 |
-| 翻譯 (離線) | **NLLB 600M** (Meta) | 離線翻譯，支援中日韓英互譯，僅限本機 |
-| 翻譯 (離線備援) | **Argos Translate** | 完全離線的輕量翻譯模型，僅支援英翻中 |
+| 用途 | AI 模型 | 說明 | 授權 |
+|------|---------|------|------|
+| 語音辨識 | **Whisper** (OpenAI) | **多語（中日韓英）** 主力辨識模型；base / small / large-v3-turbo / large-v3 可選 | MIT |
+| 語音辨識 | **Breeze-ASR-26** (MediaTek Research) | **台語（台灣閩南語）專用**，華語模式也可選用（台灣華語夾雜台語時）；Whisper large-v2 微調，結果直接輸出漢字，不需另外翻譯 | Apache-2.0 |
+| 語音辨識 | **Moonshine** (Useful Sensors) | **英文專用**，超低延遲串流辨識模型（不支援 Intel Mac） | MIT |
+| 語音辨識 | **Qwen3-ASR 0.6B** (Alibaba Qwen) | **實驗選項（v2.23.0 起）**：離線處理錄音檔時選用，中文會議與中英夾雜明顯更準；限中文／英文／韓文輸入。GPU 伺服器（v2.23.0）或本機（v2.24.0 起：Apple Silicon、NVIDIA、CPU）執行，見「Qwen3-ASR（實驗）」 | Apache-2.0 |
+| 講者辨識 | **resemblyzer** + **spectralcluster** | 聲紋特徵提取 + 頻譜分群，可在本機或 GPU 伺服器執行 | Apache-2.0 |
+| 講者辨識 | **Nemotron 3 Diarization** (NVIDIA) | **v2.26.0 起預設使用**（transformers 5.18 以上；安裝程式會自動安裝並下載模型 0.71 GB）。Intel Mac、超過 8 人時改用上一列的方法 | OpenMDW-1.1 |
+| 翻譯 (LLM) | 自架 LLM 伺服器，預設 **gemma4:26b**（伺服器沒有時改用 qwen2.5:14b） | 即時與離線翻譯（本機或區域網路 LLM 伺服器）；建議 14B 以上，並**選用不會思考、或思考可關閉的模型**，程式會自動關閉思考模式（gemma4、qwen3 等皆可），但 gpt-oss 系列架構上必定推理、關不掉，用於即時翻譯會明顯變慢 | 依選用的模型；預設 gemma4:26b、qwen2.5:14b 為 Apache-2.0 |
+| 摘要 / 逐字稿校正 (LLM) | 自架 LLM 伺服器，預設 **qwen3.8:27b** | 會議摘要與逐字稿校正（兩者共用同一個模型）；建議 27B 以上，可與翻譯用不同模型 | 依選用的模型；預設 qwen3.8:27b 為 Apache-2.0 |
+| 翻譯 (離線) | **NLLB 600M** (Meta) | 離線翻譯，支援中日韓英互譯，僅限本機 | **CC-BY-NC-4.0（僅限非商業用途）** |
+| 翻譯 (離線備援) | **Argos Translate** | 完全離線的輕量翻譯模型，僅支援英翻中 | 程式 MIT；英翻中模型 CC-BY 4.0（源自 OPUS-MT） |
+
+授權是 2026 年 10 月查證時的狀態，以各模型的頁面為準。**NLLB 600M 僅限非商業用途**：企業或組織使用前請自行確認是否符合授權條款（不要預設內部使用就算非商業），或改用 LLM 伺服器翻譯。
+
 
 語音辨識的推論引擎（同一個模型可跑在不同引擎上，程式依平台與音訊來源自動選擇）：
 
@@ -480,7 +483,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 | whisper 模型 | 語音辨識模型（預設下載 large-v3-turbo） |
 | Python venv | 虛擬環境 + ctranslate2、sentencepiece、sounddevice、numpy、faster-whisper、resemblyzer、spectralcluster |
 | Moonshine ASR | 英文串流語音辨識引擎 + medium 模型 (~245MB) |
-| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB) |
+| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權 |
 | Argos 翻譯模型 | 離線英→中翻譯模型 |
 
 **本機安裝項目（Windows）：**
@@ -493,7 +496,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 | whisper 模型 | 語音辨識模型（預設下載 large-v3-turbo） |
 | Python venv | 虛擬環境 + ctranslate2、sentencepiece、sounddevice、numpy、faster-whisper、resemblyzer、spectralcluster |
 | Moonshine ASR | 英文串流語音辨識引擎 + medium 模型 (~245MB) |
-| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB) |
+| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權 |
 | Argos 翻譯模型 | 離線英→中翻譯模型 |
 
 **本機安裝項目（Linux）：**
@@ -505,7 +508,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 | CTranslate2（ARM64 + NVIDIA） | PyPI 的 ARM64 版不含 CUDA，安裝程式會在本機從原始碼編譯 CUDA 版（約 20～40 分鐘）。函式庫裝在 `.ct2-local/`（不動系統的 `/usr/local`，同一台主機上的 GPU 辨識服務不受影響），wheel 存在 `.ct2-wheels/`，之後重裝直接使用 |
 | Python venv | 虛擬環境 + ctranslate2、faster-whisper、resemblyzer、spectralcluster、noisereduce、WebUI 套件；桌面版另含 PyQt6 |
 | Moonshine ASR | 英文串流語音辨識引擎（桌面版） |
-| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB) |
+| NLLB 600M 翻譯模型 | 離線翻譯模型，中日韓英互譯 (~600MB)，CC-BY-NC 4.0 非商業授權 |
 | Argos 翻譯模型 | 離線英→中翻譯模型（桌面版） |
 | faster-whisper 模型 | base.en / base / small.en / small / large-v3-turbo |
 | 應用程式選單捷徑 | 桌面版：`~/.local/share/applications/jt-live-whisper.desktop`（開啟 WebUI） |
@@ -1427,7 +1430,7 @@ Ollama 伺服器的翻譯模型使用作者篩選過的預設清單，下方以�
 | phi4:14b | Microsoft，品質不錯 |
 | qwen2.5:7b | 品質普通，速度最快 |
 | --- | *（分隔線）* |
-| NLLB 本機離線翻譯 | 支援中日韓英互譯，免 LLM 伺服器（CC-BY-NC 4.0 授權） |
+| NLLB 本機離線翻譯 | 支援中日韓英互譯，免 LLM 伺服器（CC-BY-NC 4.0 非商業授權） |
 | Argos 本機離線翻譯 | 僅英翻中，免 LLM 伺服器 |
 
 摘要模型同樣使用作者篩選過的預設清單：
@@ -2134,17 +2137,26 @@ ssh -L 19781:127.0.0.1:19781 <帳號>@<伺服器>
 
 #### 放在反向代理（nginx / Caddy）後面
 
-**預設完全不信任 `X-Forwarded-For`。** 不設定的話，代理後面的每個請求
-看起來都來自代理本身＝本機，那四個「僅限本機」的設定頁就等於對全世界開放。
-
-要用代理必須明確指定代理的位址：
+**預設完全不信任 `X-Forwarded-For`。** 代理後面的每個請求，連線來源都是代理本身；
+代理跟 WebUI 在同一台時就是 127.0.0.1＝本機。要用代理必須明確指定代理的位址：
 
 ```json
 "webui": { "trusted_proxies": ["127.0.0.1", "10.0.0.5"] }
 ```
 
-只有來自清單內的連線才會去看 `X-Forwarded-For`，而且取的是**最右邊那個
-非信任的跳點**：最左邊是客戶端自己填的，可以偽造。
+並讓代理送出 `X-Forwarded-For`（Caddy、Apache、Traefik 預設就會送；nginx 要加）：
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+- 只有來自清單內的連線才會去看 `X-Forwarded-For`，而且取的是**最右邊那個非信任的跳點**：最左邊是客戶端自己填的，可以偽造。
+  沒有 `X-Forwarded-For` 時改看 `X-Real-IP`、`Forwarded`
+- 標頭裡的本機位址（127.0.0.1）只有在連線本身也來自本機時才算：遠端的代理把客戶端偽造的標頭原封轉來，不會被當成本機
+- **沒設 `trusted_proxies` 時（v2.31.1 起）**：同一台代理轉來、帶著轉送標頭（`X-Forwarded-For`、`X-Real-IP`、`Forwarded`）的請求一律當成遠端：
+  要密碼、四個「僅限本機」的設定頁不開、設了 `allowed_ips` 時拒絕（不知道真正的來源），WebUI 終端機會提示一次。
+  以前這種請求都被當成本機（不用密碼、僅限本機的設定頁也打得開）
+- **代理完全不加轉送標頭時（nginx 只寫 `proxy_pass`）程式分不出請求是從代理來的，仍會被當成本機**，所以一定要照上面設定
 
 > ⚠ **`webui.allowed_ips` 與 `api.allowed_hosts` 是兩件不同的事**，名字很像但意思相反：
 >
