@@ -1060,7 +1060,7 @@ def _get_config():
         "default_engine": "llm" if llm_host else "nllb",
         "sck": sck, "is_macos": sys.platform == "darwin",
         "is_linux": sys.platform.startswith("linux"),
-        "last": last, "version": "2.29.1",
+        "last": last, "version": "2.30.0",
         # 網頁需要的後端功能等級：只換了檔案、WebUI 沒重開時，新網頁會連到舊後端（2026-10-09 Mac 實際發生：
         # 「無法取得文字轉語音狀態」）。網頁發現等級不夠就請使用者重新啟動 WebUI，不會亂報錯
         "api_level": 2,
@@ -1606,6 +1606,8 @@ def _build_args(body: dict) -> list:
         args.append("--mic")
     if body.get("denoise"):
         args.append("--denoise")
+    if body.get("keep_awake") is False:              # 預設防止睡眠與鎖定；舊版前端沒送這一項＝照預設
+        args.append("--no-keep-awake")
     if body.get("diarize"):
         args.append("--diarize")
         num_spk = body.get("num_speakers")
@@ -1704,6 +1706,7 @@ async def api_start(request: Request, body: dict = {}):
             "record": body.get("record", False), "mic": body.get("mic", False),
             "rec_source": body.get("rec_source") or "both",
             "denoise": body.get("denoise", True),
+            "keep_awake": body.get("keep_awake", True) is not False,
             "diarize": body.get("diarize", False),
             "num_speakers": body.get("num_speakers", 0),
             "summarize": body.get("summarize", False),

@@ -642,6 +642,123 @@ def _force_exit(code=0):
     os._exit(code)
 
 
+# ── 即時模式期間防止睡眠與螢幕鎖定（v2.30.0；2026-10-11 使用者：「防止翻譯／口譯期間進入睡眠或鎖定，預設啟用」）──
+# 會議開到一半電腦閒置睡著或鎖定：錄音、字幕、念給對方聽都會中斷（鎖定時 Windows 經音訊引擎錄到的都是 0）。
+# 即時模式（字幕、翻譯、雙向、口譯、純錄音）進入時開始、離開時解除；主程式意外結束也會自動解除（Windows 由系統收回、
+# macOS 的 caffeinate 與 Linux 的 tail 都盯著主程式的 PID）。只防「閒置時自動」睡眠與鎖定，按電源鍵、闔上螢幕照樣會睡
+_KEEP_AWAKE = {"on": True, "depth": 0, "impl": None}
+_ES_CONTINUOUS, _ES_SYSTEM_REQUIRED, _ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
+
+
+def _win_set_exec_state(flags):
+    """Windows SetThreadExecutionState（只對呼叫的執行緒有效；回傳 0＝失敗）"""
+    import ctypes
+    return ctypes.windll.kernel32.SetThreadExecutionState(flags)
+
+
+class _KeepAwake:
+    def __init__(self):
+        self.proc = self.th = None
+        self.stop_ev = threading.Event()
+        self.how = None
+
+    def start(self):
+        """回傳做了什麼（給畫面），做不到回 None"""
+        if IS_WINDOWS:
+            # 執行狀態是跟著執行緒的：用一條專用的執行緒拿著，解除時同一條執行緒還原
+            ready, ok = threading.Event(), []
+
+            def hold():
+                ok.append(bool(_win_set_exec_state(_ES_CONTINUOUS | _ES_SYSTEM_REQUIRED | _ES_DISPLAY_REQUIRED)))
+                ready.set()
+                self.stop_ev.wait()
+                _win_set_exec_state(_ES_CONTINUOUS)
+            self.th = threading.Thread(target=hold, name="keep-awake", daemon=True)
+            self.th.start()
+            ready.wait(5)
+            if ok and ok[0]:
+                self.how = "電腦不會自動睡眠、螢幕不會自動關閉或鎖定"
+            return self.how
+        if IS_MACOS:
+            cmd = [shutil.which("caffeinate") or "/usr/bin/caffeinate", "-d", "-i", "-w", str(os.getpid())]
+            how = "電腦不會自動睡眠、螢幕不會自動關閉或鎖定"
+        elif IS_LINUX and shutil.which("systemd-inhibit") and shutil.which("tail"):
+            cmd = ["systemd-inhibit", "--what=sleep:idle", "--who=jt-live-whisper", "--why=即時字幕／翻譯／口譯進行中",
+                   "--mode=block", "tail", f"--pid={os.getpid()}", "-f", "/dev/null"]
+            how = "電腦不會自動睡眠（螢幕會不會自動鎖定要看桌面環境）"
+        else:
+            return None
+        try:
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError:
+            return None
+        time.sleep(0.3)
+        if self.proc.poll() is not None:                 # 沒權限、沒有 logind（容器）：馬上就結束了
+            self.proc = None
+            return None
+        self.how = how
+        return how
+
+    def stop(self):
+        self.stop_ev.set()
+        if self.th is not None:
+            self.th.join(5)
+            self.th = None
+        if self.proc is not None:
+            try:
+                self.proc.terminate()
+                self.proc.wait(3)
+            except Exception:
+                pass
+            self.proc = None
+
+
+def _keep_awake_enter():
+    if not _KEEP_AWAKE["on"]:
+        return
+    _KEEP_AWAKE["depth"] += 1
+    if _KEEP_AWAKE["depth"] > 1:
+        return
+    k = _KeepAwake()
+    how = None
+    try:
+        how = k.start()
+    except Exception:
+        how = None
+    if how:
+        _KEEP_AWAKE["impl"] = k
+        print(f"  {C_DIM}[防止睡眠] 即時模式期間{how}（不要的話加 --no-keep-awake）{RESET}")
+    elif not (IS_LINUX and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))):
+        # 沒有桌面的 Linux（伺服器版、systemd 服務）本來就不會閒置睡眠，而且 logind 不讓非桌面工作階段擋：不必每次都說
+        print(f"  {C_DIM}[防止睡眠] 這台電腦做不到，期間請自己留意睡眠與鎖定的設定{RESET}")
+
+
+def _keep_awake_exit():
+    if not _KEEP_AWAKE["on"] or _KEEP_AWAKE["depth"] == 0:
+        return
+    _KEEP_AWAKE["depth"] -= 1
+    if _KEEP_AWAKE["depth"] == 0 and _KEEP_AWAKE["impl"] is not None:
+        try:
+            _KEEP_AWAKE["impl"].stop()
+        finally:
+            _KEEP_AWAKE["impl"] = None
+
+
+def _keep_awake_during(fn):
+    """即時模式的主函式：進入時防止睡眠與鎖定、離開時解除（巢狀呼叫只算一次）"""
+    import functools
+
+    @functools.wraps(fn)
+    def wrap(*a, **k):
+        _keep_awake_enter()
+        try:
+            return fn(*a, **k)
+        finally:
+            _keep_awake_exit()
+    return wrap
+
+
 def _is_loopback_device(name):
     """判斷裝置名稱是否為系統播放聲音的 loopback 裝置"""
     n = name.lower()
@@ -2517,7 +2634,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.29.1"
+APP_VERSION = "2.30.0"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -7243,6 +7360,7 @@ def _input_interactive_menu(args):
         sys.exit(0)
 
 
+@_keep_awake_during
 def run_stream(capture_id: int, translator, model_name: str, model_path: str,
                length_ms: int = 5000, step_ms: int = 3000, mode: str = "en2zh",
                record: bool = False, rec_device: int = None,
@@ -7791,6 +7909,7 @@ def run_stream(capture_id: int, translator, model_name: str, model_path: str,
 
 
 
+@_keep_awake_during
 def run_stream_moonshine(capture_id: int, translator, moonshine_model_name: str,
                          mode: str = "en2zh",
                          record: bool = False, rec_device: int = None,
@@ -8200,6 +8319,7 @@ def run_stream_moonshine(capture_id: int, translator, moonshine_model_name: str,
     _cleanup_moonshine()
 
 
+@_keep_awake_during
 def run_stream_remote(capture_id: int, translator, model_name: str,
                       remote_cfg: dict, mode: str = "en2zh",
                       length_ms: int = 5000, step_ms: int = 3000,
@@ -8738,6 +8858,7 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
     _cleanup_remote()
 
 
+@_keep_awake_during
 def run_stream_local_whisper(capture_id: int, translator, model_name: str,
                              mode: str = "en2zh",
                              length_ms: int = 5000, step_ms: int = 3000,
@@ -9431,6 +9552,7 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
 #  雙向即時翻譯（en_zh / ja_zh: 系統音訊翻譯 + 麥克風反向翻譯）
 # ═══════════════════════════════════════════════════════════════════
 
+@_keep_awake_during
 def run_stream_bidirectional(lb_device_id, mic_device_id,
                               translator_lb, translator_mic,
                               model_name: str, mode: str = "en_zh",
@@ -11508,6 +11630,7 @@ def _ask_record_source():
         return aggregate_dev[0], aggregate_dev[1], "雙方聲音"
 
 
+@_keep_awake_during
 def run_record_only(rec_device, topic=None, lb_device=None, mic_device=None, channels=None):
     """純錄音模式：僅錄製音訊為 WAV 檔，不做 ASR 或翻譯。
     聚集裝置（ch>=3）自動分離輸出/輸入音軌並分開顯示波形。
@@ -18083,6 +18206,9 @@ def parse_args():
         "--denoise", action="store_true",
         help="即時模式啟用背景降噪（noisereduce spectral gating，推薦搭配麥克風使用）")
     parser.add_argument(
+        "--no-keep-awake", action="store_true",
+        help="即時模式期間不防止電腦自動睡眠與螢幕鎖定（預設會防止：Windows、macOS 不自動睡眠、螢幕不自動關閉或鎖定；Linux 不自動睡眠）")
+    parser.add_argument(
         "--local-asr", action="store_true",
         help="強制使用本機 辨識（忽略GPU 伺服器 設定，即時模式與離線模式皆適用）")
     parser.add_argument(
@@ -18389,6 +18515,7 @@ def main():
         print(f"{C_ERR}[錯誤] --passthrough（同時送出原音）要搭配 --speak-them（念給對方聽的虛擬麥克風）{RESET}", file=sys.stderr)
         sys.exit(1)
     _diarize_engine = args.diarize_engine
+    _KEEP_AWAKE["on"] = not args.no_keep_awake
     if args.model == QWEN_MODEL and not args.input:
         print(f"{C_HIGHLIGHT}[提示] Qwen3-ASR 只支援離線處理（--input），即時模式改用推薦模型{RESET}")
         args.model = None

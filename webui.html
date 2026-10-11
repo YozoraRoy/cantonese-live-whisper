@@ -398,6 +398,7 @@ body.dark .ver-warn{background:#3a2f0b;color:#ffda6a;border-color:#665216}
       <label><input type="checkbox" id="iRec"> 錄音至檔案</label>
       <label><input type="checkbox" id="iMic"> 轉錄麥克風</label>
       <label><input type="checkbox" id="iDenoise" checked> 降噪</label>
+      <label><input type="checkbox" id="iKeepAwake" checked> 防止睡眠與鎖定</label>
     </div>
   </div>
   <!-- 安全設定（僅本機顯示）-->
@@ -724,7 +725,7 @@ async function loadCfg(){
   // 純錄音的錄音來源（v2.26.3）
   cselSetItems($('iRecSrc'),[{value:'both',label:'雙方（系統音訊＋麥克風）',tag:''},{value:'system',label:'只錄系統音訊（對方）',tag:''},{value:'mic',label:'只錄麥克風（我方）',tag:''}]);
   cselSetValue($('iRecSrc'),['both','system','mic'].includes(L.rec_source)?L.rec_source:'both');$('iRecSrc').addEventListener('change',_devRowsVis);
-  if(L.record)$('iRec').checked=true;if(L.mic)$('iMic').checked=true;if(L.denoise!==undefined)$('iDenoise').checked=!!L.denoise;
+  if(L.record)$('iRec').checked=true;if(L.mic)$('iMic').checked=true;if(L.denoise!==undefined)$('iDenoise').checked=!!L.denoise;if(L.keep_awake!==undefined)$('iKeepAwake').checked=!!L.keep_awake;
   // 離線處理
   if(L.diarize){$('iDiarize').checked=true;onDiarizeChg()}
   if(L.num_speakers>0)$('iNumSpk').value=L.num_speakers;
@@ -932,7 +933,7 @@ async function go(){
   try{const st=await(await fetch('/api/status',{headers:_authHeaders()})).json();if(st.running){showToast('已有處理正在執行中，請先停止再重新啟動','err');return}}catch(e){}
   curCfg={mode,recSrc:mode==='record'?(cselVal($('iRecSrc'))||'both'):'',modeLabel:_modeLabels[mode]||mode,model:cselVal($('iModel')),engine:eng,asrLoc,isFile,record:$('iRec').checked,denoise:$('iDenoise').checked,mic:$('iMic').checked,diarize:isFile&&$('iDiarize').checked,summarize:isFile&&$('iSummarize').checked,subtitle_overlay:$('iOvEnable')&&$('iOvEnable').checked};
   $('goBtn').disabled=true;$('goBtn').textContent='啟動中...';
-  try{const b={mode,model:cselVal($('iModel')),scene:cselVal($('iScene')),engine:cselVal($('iEngine')),llm_model:cselVal($('iLlmModel')),llm_host:$('iLlmHost').value,topic:$('iTopic').value,record:$('iRec').checked,mic:$('iMic').checked,denoise:$('iDenoise').checked,local_asr:cselVal($('iAsrLoc'))==='local',device:cselVal($('iDevice'))||null,mic_device:cselVal($('iMicDev'))||null,rec_source:mode==='record'?(cselVal($('iRecSrc'))||'both'):null,subtitle_overlay:$('iOvEnable')&&$('iOvEnable').checked,fwd_enabled:$('iFwdEnable')&&$('iFwdEnable').checked,kw_enabled:$('iKwEnable')&&$('iKwEnable').checked};
+  try{const b={mode,model:cselVal($('iModel')),scene:cselVal($('iScene')),engine:cselVal($('iEngine')),llm_model:cselVal($('iLlmModel')),llm_host:$('iLlmHost').value,topic:$('iTopic').value,record:$('iRec').checked,mic:$('iMic').checked,denoise:$('iDenoise').checked,keep_awake:$('iKeepAwake').checked,local_asr:cselVal($('iAsrLoc'))==='local',device:cselVal($('iDevice'))||null,mic_device:cselVal($('iMicDev'))||null,rec_source:mode==='record'?(cselVal($('iRecSrc'))||'both'):null,subtitle_overlay:$('iOvEnable')&&$('iOvEnable').checked,fwd_enabled:$('iFwdEnable')&&$('iFwdEnable').checked,kw_enabled:$('iKwEnable')&&$('iKwEnable').checked};
   if(isFile&&_selectedFiles.length){b.input_files=_selectedFiles;if($('iDiarize').checked){b.diarize=true;const ns=parseInt($('iNumSpk').value)||0;if(ns>0)b.num_speakers=ns}if($('iSummarize').checked){b.summarize=true;const sm=cselVal($('iSumModel'));if(sm)b.summary_model=sm;const sr=parseInt($('iSumRounds').value)||1;if(sr>1)b.summary_rounds=sr}if(!$('iGenSrt').checked)b.no_srt=true;if(!$('iGenVtt').checked)b.no_vtt=true}
   if(!interpBody(b)){$('goBtn').disabled=false;$('goBtn').textContent='開始';return}
   const r=await fetch('/api/start',{method:'POST',headers:_authHeaders(),body:JSON.stringify(b)});const d=await r.json();
@@ -1181,6 +1182,7 @@ const _tips={
   iRec:'同時將音訊錄製為檔案，儲存於 recordings/ 目錄',
   iMic:'同時轉錄麥克風輸入（ASR 負載加倍，需使用本機辨識）',
   iDenoise:'啟用背景降噪（適合嘈雜環境，安靜環境可不勾）',
+  iKeepAwake:'即時模式期間電腦不會自動睡眠、螢幕不會自動關閉或鎖定（Linux 只防睡眠）；停止後恢復原本的設定',
   // 安全設定
   iPwRead:'遠端觀看字幕用密碼。空白表示不需密碼即可觀看',
   iPwAdmin:'遠端管理用密碼。空白表示不啟用遠端管理功能',

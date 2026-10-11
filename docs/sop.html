@@ -138,7 +138,7 @@
   </aside>
   <article class="doc-body md">
 <h1 id="jt-live-whisper-安裝與使用-sop">jt-live-whisper 安裝與使用 SOP</h1>
-<p>即時英翻中字幕系統 v2.29.1 (by Jason Cheng)</p>
+<p>即時英翻中字幕系統 v2.30.0 (by Jason Cheng)</p>
 <table>
 <thead>
 <tr>
@@ -1368,6 +1368,7 @@ v2.27.0 起安裝程式（含 <code>-Upgrade</code>）在 Windows 預設狀態�
 <li>錄音中顯示錄音檔大小與磁碟剩餘空間；「暫停」在三個平台都有作用（v2.26.3 起，先前 Windows 按了沒反應、純錄音按了也照錄）</li>
 <li>按「停止」後，有錄音的會先轉成 MP3 再結束：按鈕顯示「存檔中...」、底部顯示轉檔進度，一小時的錄音約要幾十秒，<strong>這段時間不要關閉終端機視窗</strong>。完成後畫面列出錄音檔（v2.26.4 起；先前 4 秒就強制結束，畫面寫「程式異常結束（錯誤碼 -15）」，資料夾裡留下同名的 WAV 與 MP3，兩個都是完整的同一段錄音）</li>
 <li>防呆驗證（未選檔案、LLM 未設定、重複啟動等）</li>
+<li>「其他設定」的「防止睡眠與鎖定」（預設勾選，v2.30.0 起）：即時模式期間電腦不會自動睡眠、螢幕不會自動關閉或鎖定，停止後恢復（見 4-6 下方說明）</li>
 <li><strong>結束 WebUI</strong>：在執行它的終端機按一次 Ctrl+C，畫面會顯示「正在停止 WebUI...」；有錄音或朗讀在進行時會先等它存完檔。急著結束就再按一次 Ctrl+C，WebUI 立刻結束，錄音或朗讀照樣在背景存完檔（v2.27.0 起；先前存檔中再按 Ctrl+C 會讓 WebUI 卡住、怎麼按都結束不了）</li>
 <li>淺色/深色主題切換</li>
 <li>字幕轉發：即時字幕自動轉發到通訊平台（見下方說明）</li>
@@ -1601,6 +1602,11 @@ v2.27.0 起安裝程式（含 <code>-Upgrade</code>）在 Windows 預設狀態�
 <td>不啟用</td>
 </tr>
 <tr>
+<td><code>--no-keep-awake</code></td>
+<td>即時模式期間<strong>不</strong>防止電腦自動睡眠與螢幕鎖定（見下方說明）</td>
+<td>預設會防止</td>
+</tr>
+<tr>
 <td><code>--local-asr</code></td>
 <td>強制使用本機辨識（忽略 GPU 伺服器設定，即時與離線模式皆適用）</td>
 <td></td>
@@ -1611,6 +1617,36 @@ v2.27.0 起安裝程式（含 <code>-Upgrade</code>）在 Windows 預設狀態�
 <td></td>
 </tr>
 </tbody></table>
+<p><strong>即時模式期間防止睡眠與鎖定</strong>（v2.30.0 起，預設啟用）：會議開到一半電腦閒置睡著或鎖定，錄音、字幕、念給對方聽都會中斷（Windows 鎖定時錄到的聲音全是 0）。即時字幕、翻譯、雙向、語音口譯、純錄音期間：</p>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>做法</th>
+<th>效果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Windows</td>
+<td>系統的執行狀態（SetThreadExecutionState）</td>
+<td>不會自動睡眠、螢幕不會自動關閉或鎖定</td>
+</tr>
+<tr>
+<td>macOS</td>
+<td>系統內建的 <code>caffeinate -d -i</code>，綁著主程式</td>
+<td>同上</td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>systemd-inhibit --what=sleep:idle</code></td>
+<td>不會自動睡眠；螢幕會不會自動鎖定要看桌面環境。沒有桌面的伺服器版本來就不會閒置睡眠，不做也不提示</td>
+</tr>
+</tbody></table>
+<ul>
+<li>停止後恢復原本的設定；程式意外結束時也會自動解除（Windows 由系統收回、macOS／Linux 的輔助程式盯著主程式）</li>
+<li>只擋「閒置時自動」睡眠與鎖定：按電源鍵、闔上筆電螢幕、手動鎖定（Windows 鍵＋L）照樣會睡或鎖</li>
+<li>不要的話：命令列加 <code>--no-keep-awake</code>、WebUI 取消勾選「防止睡眠與鎖定」。離線處理與朗讀不套用</li>
+</ul>
 <p><strong>範例：</strong></p>
 <pre><code class="language-bash"># 查詢可用音訊裝置
 ./start.sh --list-devices
