@@ -877,7 +877,7 @@ def _audio_devices():
                 pass
         if sck["supported"] and sck["permission"]:
             devices.append({"id": _TM_SCK_LOOPBACK_ID, "kind": "system",
-                            "name": "ScreenCaptureKit 系統音訊（免安裝 BlackHole）",
+                            "name": "ScreenCaptureKit 系統音訊（macOS 內建）",
                             "channels": 2, "sr": 48000})
             auto_loopback = f"[{_TM_SCK_LOOPBACK_ID}] ScreenCaptureKit 系統音訊"
         # Linux PipeWire / PulseAudio：預設喇叭的 monitor 來源
@@ -1060,7 +1060,7 @@ def _get_config():
         "default_engine": "llm" if llm_host else "nllb",
         "sck": sck, "is_macos": sys.platform == "darwin",
         "is_linux": sys.platform.startswith("linux"),
-        "last": last, "version": "2.30.0",
+        "last": last, "version": "2.31.0",
         # 網頁需要的後端功能等級：只換了檔案、WebUI 沒重開時，新網頁會連到舊後端（2026-10-09 Mac 實際發生：
         # 「無法取得文字轉語音狀態」）。網頁發現等級不夠就請使用者重新啟動 WebUI，不會亂報錯
         "api_level": 2,
@@ -1650,6 +1650,8 @@ def _build_args(body: dict) -> list:
             args.extend(["--interp-intro", "none"])
         if body.get("interp_them") and body.get("interp_passthrough"):
             args.append("--passthrough")
+        if body.get("interp_them") and body.get("interp_defmic") is False:   # 預設自動切換；舊前端沒送＝照預設
+            args.append("--no-switch-default-mic")
     return args
 
 
@@ -1715,7 +1717,7 @@ async def api_start(request: Request, body: dict = {}):
             "gen_srt": not body.get("no_srt", False),
             "gen_vtt": not body.get("no_vtt", False),
             **{k: body.get(k) for k in ("interp_me", "interp_me_dev", "interp_me_voice", "interp_them", "interp_them_dev",
-                                        "interp_them_voice", "interp_intro", "interp_passthrough") if k in body},
+                                        "interp_them_voice", "interp_intro", "interp_passthrough", "interp_defmic") if k in body},
         }
         # 同步字幕轉發、關鍵字通知、懸浮字幕的啟用狀態（避免不勾但沒按儲存，下次還是啟用）
         if "fwd_enabled" in body:
@@ -1867,11 +1869,11 @@ def _interp_them_info(devices):
     Windows（v2.29.0）：裝了 usbip-win2 就跟 Linux 一樣自動建立；沒裝時反灰、說明怎麼裝。
     說明文字用主程式那一份（命令列、互動選單、WebUI 同一句話）"""
     if sys.platform.startswith("linux"):
-        return {"supported": True, "auto": True, "note": "Linux 自動建立虛擬麥克風，不用安裝"}
+        return {"supported": True, "auto": True, "note": "Linux 自動建立虛擬麥克風、不用安裝，口譯期間設成系統預設麥克風、結束切回"}
     if sys.platform == "darwin":
         return {"supported": True, "auto": False, "need": _TM_INTERP_MAC_NEED,
                 "found": any(_TM_INTERP_VIRTUAL.search(d.get("name") or "") for d in devices),
-                "found_note": "已偵測到 BlackHole 2ch：會議軟體的麥克風改選「BlackHole 2ch」，結束後記得改回來"}
+                "found_note": "已偵測到 BlackHole 2ch：口譯期間系統預設麥克風自動切到它、結束切回（會議軟體的麥克風設成「與系統相同」）"}
     if _interp_win_ready():
         try:
             from jtlw_tts import vmic

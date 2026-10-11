@@ -138,7 +138,7 @@
   </aside>
   <article class="doc-body md">
 <h1 id="jt-live-whisper-安裝與使用-sop">jt-live-whisper 安裝與使用 SOP</h1>
-<p>即時英翻中字幕系統 v2.30.0 (by Jason Cheng)</p>
+<p>即時英翻中字幕系統 v2.31.0 (by Jason Cheng)</p>
 <table>
 <thead>
 <tr>
@@ -382,7 +382,7 @@ translate_meeting.py                            remote_whisper_server.py (FastAP
 <td>Qwen3-ASR 0.6B</td>
 </tr>
 </tbody></table>
-<p>你仍然可以正常從喇叭或耳機聽到聲音。macOS 13 以上使用系統內建的 ScreenCaptureKit 複製一份音訊給辨識程式（只需授權一次「螢幕錄製」，不必安裝驅動）；macOS 12 以下改用 BlackHole 虛擬音訊裝置；Windows 的 WASAPI Loopback 則直接擷取系統播放的音訊，同樣不需要安裝額外驅動；Linux 從 PipeWire / PulseAudio 的 monitor 來源擷取，也不需要虛擬音效卡。</p>
+<p>你仍然可以正常從喇叭或耳機聽到聲音。macOS 13 以上使用系統內建的 ScreenCaptureKit 複製一份音訊給辨識程式（只需授權一次「螢幕錄製」，不必安裝驅動；只有雙向語音口譯的「念給對方聽」需要 BlackHole 2ch，見 4-16）；macOS 12 以下改用 BlackHole 虛擬音訊裝置；Windows 的 WASAPI Loopback 則直接擷取系統播放的音訊，同樣不需要安裝額外驅動；Linux 從 PipeWire / PulseAudio 的 monitor 來源擷取，也不需要虛擬音效卡。</p>
 <p><strong>目錄結構：</strong></p>
 <pre><code>jt-live-whisper/
   translate_meeting.py     主程式（即時辨識、離線處理、翻譯、摘要，跨平台）
@@ -1258,7 +1258,7 @@ cd ~/Apps/jt-live-whisper
 cd C:\jt-live-whisper
 .\install.ps1 -Upgrade
 </code></pre>
-<p>自動從 GitHub 下載最新版本的程式檔案（translate_meeting.py、start.sh、install.sh、SOP.md 等），不影響現有的 venv、whisper.cpp、模型和設定檔。macOS 與 Windows 升級後請再執行一次安裝腳本（macOS: <code>./install.sh</code>、Windows: <code>.\install.ps1</code>），新版本需要的套件才會裝上。</p>
+<p>自動從 GitHub 下載最新版本的程式檔案（translate_meeting.py、start.sh、install.sh、SOP.md 等），不影響現有的 venv、whisper.cpp、模型和設定檔。macOS 與 Windows 升級後請再執行一次安裝腳本（macOS: <code>./install.sh</code>、Windows: <code>.\install.ps1</code>，<strong>不加 <code>--upgrade</code></strong>），新版本需要的套件才會裝上。</p>
 <ul>
 <li><strong>升級執行一次就好</strong>（v2.28.1 起）：新版才加入的檔案由新版的安裝程式接手補齊。以前跑的是「舊版」安裝程式，只會複製舊版清單上的檔案，新版才加入的（例如 v2.27.0 的朗讀模組 <code>jtlw_tts/</code>）要再升級一次才會到</li>
 <li><strong>從 v2.28.0 以前升級上來的</strong>：第一次升級跑的還是舊的安裝程式，新加入的檔案可能還沒到；之後執行 <code>./start.sh</code>（Windows：<code>.\start.ps1</code>，點捷徑也是）時會先自動補齊（畫面顯示「升級沒有完成…自動補齊」），連不到 GitHub 時會說要再執行一次升級</li>
@@ -3209,13 +3209,13 @@ GPU 伺服器的程式比較舊時，安裝程式會說明先更新伺服器（�
 </ul>
 <p>字幕、逐字稿照舊，只是多了語音。合成在 GPU 伺服器（要有文字轉語音，見 4-15；GPU 伺服器要 v2.28.0 以上才有邊合成邊播）。</p>
 <h4 id="事前準備與接線">事前準備與接線</h4>
-<p><strong>念給對方聽要有「虛擬麥克風」</strong>：會議軟體只能從麥克風收聲音，我們把英文念進虛擬麥克風、會議軟體的麥克風改選它，對方才聽得到。「念給我聽」三個平台都不用另外安裝。</p>
+<p><strong>念給對方聽要有「虛擬麥克風」</strong>：會議軟體只能從麥克風收聲音，我們把英文念進虛擬麥克風、會議軟體從它收，對方才聽得到。口譯期間系統預設麥克風會自動切到它（v2.31.0 起，見下方），會議軟體的麥克風設成「與系統相同／預設」即可。「念給我聽」三個平台都不用另外安裝。</p>
 <table>
 <thead>
 <tr>
 <th>平台</th>
 <th>念給對方聽</th>
-<th>會議軟體的麥克風改選</th>
+<th>虛擬麥克風（口譯期間自動設成系統預設）</th>
 </tr>
 </thead>
 <tbody><tr>
@@ -3235,13 +3235,22 @@ GPU 伺服器的程式比較舊時，安裝程式會說明先更新伺服器（�
 </tr>
 </tbody></table>
 <p>WebUI 的「念給對方聽」下方會顯示這台要裝什麼：macOS 偵測不到 BlackHole 時黃色提示、偵測到時綠色；Windows 沒裝 usbip-win2 時反灰並說明怎麼裝，裝了就跟 Linux 一樣「自動建立虛擬麥克風」。</p>
+<p><strong>口譯期間自動切換系統預設麥克風</strong>（v2.31.0 起，預設啟用）：以前要自己到會議軟體把麥克風改成虛擬麥克風、結束後再改回來，忘了改回下一場對方就聽不到你。現在：</p>
+<ul>
+<li>開始念給對方聽時，把<strong>系統預設麥克風</strong>切到上表的虛擬麥克風；停止時切回原本的。會議軟體的麥克風設成「與系統相同」（Zoom）／「預設裝置」（Teams）／「預設」（瀏覽器版會議）一次，之後就自動跟著切換</li>
+<li>結束時只有預設還是虛擬麥克風才切回：期間你自己改過預設就不動</li>
+<li>WebUI 中途切換裝置（主程式重新啟動）時保持不變，會議軟體不會短暫換成實體麥克風；程式意外結束沒切回的話，下次啟動 jt-live-whisper 時補切回</li>
+<li>我們自己錄你聲音的那一路不跟著預設走：自動偵測麥克風時排除虛擬麥克風、改用原本的預設（Linux 改成固定錄原本的來源），不會錄到自己念出去的英文</li>
+<li>不要自動切換：命令列加 <code>--no-switch-default-mic</code>；WebUI「語音口譯」取消勾選「自動切換系統預設麥克風」（會記住）。這時要自己在會議軟體選虛擬麥克風、用完改回</li>
+<li>只開「念給我聽」不會切換</li>
+</ul>
 <p><strong>Windows 的口譯麥克風</strong>（v2.29.0 起）：</p>
 <ul>
 <li>原理：jt-live-whisper 在本機（127.0.0.1）假裝成一支 USB 麥克風，usbip-win2 把它接成這台電腦的 USB 裝置，Windows 用內建的 USB 音訊驅動認它。我們沒有另外的驅動，不需要測試簽章</li>
 <li><code>.\install.ps1 -InterpMic</code>：下載固定版本（usbip-win2 0.9.8.1），核對 SHA256 與發行者的數位簽章（Cloudyne Systems）都對才安裝；要系統管理員權限（會跳「使用者帳戶控制」）。<strong>安裝時 USB 3 集線器會重新啟動，USB 鍵盤、滑鼠、耳機會斷線幾秒，請不要在會議中安裝</strong>。完整安裝（<code>.\install.ps1</code>）結束時也會問一次（預設否），升級不問</li>
 <li>安裝程式建議重新開機；實測不重開也能用。開始時如果說「沒有接上口譯麥克風」，請重新開機一次</li>
 <li>只提供自己的口譯麥克風：已經裝了別的虛擬音效卡也不提供（常見的幾套是捐贈軟體、公司使用要付費）</li>
-<li><strong>Windows 會把新接上的 USB 麥克風自動設成預設麥克風</strong>：jt-live-whisper 會馬上改回原本的預設（一般與通訊兩種），會議軟體選「預設」的不會被換成口譯麥克風</li>
+<li>口譯期間系統預設麥克風（一般與通訊兩種）設成口譯麥克風、拔掉前切回（v2.31.0 起，見上方）。關掉自動切換時：Windows 會把新接上的 USB 麥克風自動設成預設，jt-live-whisper 會馬上改回原本的</li>
 <li>口譯麥克風由背景的小程式負責（<code>jtlw_tts\vmic.py --serve</code>，只聽本機 127.0.0.1），主程式停止時一起結束；
 WebUI 中途切換裝置時它留著給重新啟動的主程式接手，<strong>麥克風不會消失</strong>，會議軟體不用改；主程式意外結束的話，60 秒後自己拔掉並結束</li>
 <li><strong>同一台電腦一次只能有一個程式念給對方聽</strong>：另一份 jt-live-whisper 正在用口譯麥克風時，第二份會說「口譯麥克風正在被另一個 jt-live-whisper 使用」，先停止那一份再開始（v2.29.0 會共用，先結束的那份會把麥克風移除）</li>

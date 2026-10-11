@@ -357,13 +357,13 @@ body.dark .ver-warn{background:#3a2f0b;color:#ffda6a;border-color:#665216}
   <!-- 雙向語音口譯（v2.28.0）：英中雙向即時才顯示 -->
   <div class="sec" id="rInterp" style="display:none">
     <div class="sec-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>語音口譯</div>
-    <div class="sec-hint">把譯文念出來：對方說的英文翻成中文念給你聽、你說的中文翻成英文念給對方聽（合成在 GPU 伺服器）。<b>請戴耳機</b>；念給對方聽時，會議軟體的麥克風要改選虛擬麥克風，結束後記得改回來。</div>
+    <div class="sec-hint">把譯文念出來：對方說的英文翻成中文念給你聽、你說的中文翻成英文念給對方聽（合成在 GPU 伺服器）。<b>請戴耳機</b>；念給對方聽時，口譯期間系統預設麥克風自動切到虛擬麥克風、結束切回，會議軟體的麥克風設成「與系統相同／預設」就會跟著切換。</div>
     <div class="checks"><label><input type="checkbox" id="iInterpMe" onchange="interpVis()"> 念給我聽（中文）</label></div>
     <div class="row2" id="rInterpMe"><div class="fg"><label>播放裝置（耳機）</label><div class="csel" id="iInterpMeDev" data-value=""></div></div><div class="fg"><label>聲音</label><div class="csel" id="iInterpMeVoice" data-value=""></div></div></div>
     <div class="checks"><label><input type="checkbox" id="iInterpThem" onchange="interpVis()"> 念給對方聽（英文）</label></div>
     <div class="ip-need" id="iInterpThemNeed"></div>
     <div class="row2" id="rInterpThem"><div class="fg"><label>輸出到（虛擬麥克風）</label><div class="csel" id="iInterpThemDev" data-value=""></div></div><div class="fg"><label>聲音</label><div class="csel" id="iInterpThemVoice" data-value=""></div></div></div>
-    <div class="checks" id="rInterpIntro"><label><input type="checkbox" id="iInterpIntro" checked> 第一次念給對方聽之前先說明（"Hi, I'm using an AI interpreter, so there will be a short delay."）</label><label><input type="checkbox" id="iInterpPass"> 同時送出我的原聲（念英文時原聲自動調小）</label></div>
+    <div class="checks" id="rInterpIntro"><label><input type="checkbox" id="iInterpIntro" checked> 第一次念給對方聽之前先說明（"Hi, I'm using an AI interpreter, so there will be a short delay."）</label><label><input type="checkbox" id="iInterpPass"> 同時送出我的原聲（念英文時原聲自動調小）</label><label><input type="checkbox" id="iInterpDefMic" checked> 自動切換系統預設麥克風（口譯期間切到虛擬麥克風、結束切回）</label></div>
   </div>
   <!-- 離線處理 -->
   <div class="sec" id="rOffline" style="display:none">
@@ -813,7 +813,7 @@ function _renderSckHint(c){
   if(!c.is_macos||!s.supported||s.permission){el.style.display='none';el.innerHTML='';return}
   el.style.display='';
   el.innerHTML='<div style="background:rgba(255,193,7,.12);border:1px solid rgba(255,193,7,.4);border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.7;color:var(--text)">'
-    +'<b>ScreenCaptureKit 可免安裝 BlackHole 直接擷取系統音訊</b><br>'
+    +'<b>ScreenCaptureKit 可直接擷取系統音訊，不必安裝 BlackHole</b>（只有雙向語音口譯的「念給對方聽」需要 BlackHole 2ch）<br>'
     +'尚未取得「螢幕錄製」權限（只取音訊、不會擷取畫面）。'
     +'授權對象是<b>'+(s.app||'啟動本程式的終端機程式')+'</b>，不是 Python；'
     +'按下方按鈕授權，或到「系統設定 → 隱私權與安全性 → 螢幕錄製」勾選它。'
@@ -1182,6 +1182,7 @@ const _tips={
   iRec:'同時將音訊錄製為檔案，儲存於 recordings/ 目錄',
   iMic:'同時轉錄麥克風輸入（ASR 負載加倍，需使用本機辨識）',
   iDenoise:'啟用背景降噪（適合嘈雜環境，安靜環境可不勾）',
+  iInterpDefMic:'念給對方聽時，口譯期間把系統預設麥克風切到虛擬麥克風、結束切回；會議軟體的麥克風設成「與系統相同／預設」就不用每次自己選、自己改回',
   iKeepAwake:'即時模式期間電腦不會自動睡眠、螢幕不會自動關閉或鎖定（Linux 只防睡眠）；停止後恢復原本的設定',
   // 安全設定
   iPwRead:'遠端觀看字幕用密碼。空白表示不需密碼即可觀看',
@@ -1594,11 +1595,11 @@ function interpFill(info,L){
   const it=info.interp_them||{},ne=$('iInterpThemNeed');
   if(it.supported===false){ne.className='ip-need no';ne.textContent=it.note||'';L=Object.assign({},L,{interp_them:false});$('iInterpThem').disabled=true}
   else{$('iInterpThem').disabled=false;ne.className='ip-need '+(it.warn?'warn':(it.auto||it.found?'ok':'warn'));ne.textContent=it.auto?(it.note||''):it.found?(it.found_note||''):'念給對方聽'+(it.need||'')}
-  $('iInterpMe').checked=!!L.interp_me;$('iInterpThem').checked=!!L.interp_them;$('iInterpIntro').checked=L.interp_intro!==false;$('iInterpPass').checked=!!L.interp_passthrough;interpVis()}
+  $('iInterpMe').checked=!!L.interp_me;$('iInterpThem').checked=!!L.interp_them;$('iInterpIntro').checked=L.interp_intro!==false;$('iInterpPass').checked=!!L.interp_passthrough;$('iInterpDefMic').checked=L.interp_defmic!==false;interpVis()}
 function interpBody(b){if($('rInterp').style.display==='none')return true;
   b.interp_me=$('iInterpMe').checked;b.interp_them=$('iInterpThem').checked;b.interp_intro=$('iInterpIntro').checked;b.interp_passthrough=$('iInterpPass').checked;
   if(b.interp_me){b.interp_me_dev=cselVal($('iInterpMeDev'))||'default';b.interp_me_voice=cselVal($('iInterpMeVoice'))}
-  if(b.interp_them){b.interp_them_dev=cselVal($('iInterpThemDev'));b.interp_them_voice=cselVal($('iInterpThemVoice'));
+  if(b.interp_them){b.interp_them_dev=cselVal($('iInterpThemDev'));b.interp_them_voice=cselVal($('iInterpThemVoice'));b.interp_defmic=$('iInterpDefMic').checked;
     if(!b.interp_them_dev){const it=(_ttsInfo&&_ttsInfo.interp_them)||{};showToast('念給對方聽：請選擇虛擬麥克風'+(it.need?'（'+it.need+'）':''),'err');return false}}
   return true}
 function _isTtsMode(m){return m==='tts'||m==='tts_file'}

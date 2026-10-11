@@ -29,7 +29,7 @@ _COLS=$(tput cols 2>/dev/null || echo 60)
 [ "$_COLS" -lt 40 ] && _COLS=40
 _LINE=$(printf '%*s' "$_COLS" '' | tr ' ' '=')
 echo -e "${C_TITLE}${_LINE}${NC}"
-echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.30.0 - 100% 全地端 AI 語音工具箱${NC}"
+echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.0 - 100% 全地端 AI 語音工具箱${NC}"
 echo -e "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
 echo -e "${C_TITLE}${_LINE}${NC}"
 echo ""
@@ -109,7 +109,8 @@ fi
 if [ "$SKIP_BLACKHOLE" -eq 0 ] && [ -x "$SCRIPT_DIR/bin/jt-sck-audio" ]; then
     if "$SCRIPT_DIR/bin/jt-sck-audio" --check 2>/dev/null | grep -q '"permission":true'; then
         SKIP_BLACKHOLE=1
-        echo -e "${C_OK}系統音訊: ScreenCaptureKit（不需 BlackHole）${NC}"
+        echo -e "${C_OK}系統音訊: ScreenCaptureKit（擷取系統音訊不需 BlackHole）${NC}"
+        echo -e "  ${C_DIM}只有雙向語音口譯的「念給對方聽」需要 BlackHole 2ch（把英文送進會議軟體的麥克風）${NC}"
     fi
 fi
 
@@ -147,7 +148,8 @@ if [ "$SKIP_BLACKHOLE" -eq 0 ]; then
     if [ -n "$MISSING" ]; then
         echo ""
         if [ -f "$SCRIPT_DIR/sck_audio_capture.swift" ]; then
-            echo -e "${C_OK}建議改用 ScreenCaptureKit：不需 BlackHole、不必建立多重輸出裝置${NC}"
+            echo -e "${C_OK}建議改用 ScreenCaptureKit：擷取系統音訊不需 BlackHole、不必建立多重輸出裝置${NC}"
+            echo -e "  ${C_DIM}（只有雙向語音口譯的「念給對方聽」需要 BlackHole 2ch）${NC}"
             echo -e "  ${C_DIM}授權指令：./start.sh --sck-permission${NC}"
             echo ""
         fi

@@ -217,7 +217,7 @@ spinner_stop() {
 print_title() {
     echo ""
     echo -e "${C_TITLE}============================================================${NC}"
-    echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.30.0 - 100% 全地端 AI 語音工具箱 - 安裝程式${NC}"
+    echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.0 - 100% 全地端 AI 語音工具箱 - 安裝程式${NC}"
     echo -e "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
     echo -e "${C_TITLE}============================================================${NC}"
     echo ""
@@ -1625,7 +1625,8 @@ check_sck() {
     perm=$("$bin" --check 2>/dev/null | grep -o '"permission":[a-z]*' | cut -d: -f2)
     if [ "$perm" = "true" ]; then
         check_ok "已取得「螢幕錄製」權限，可直接擷取系統音訊"
-        echo -e "  ${C_DIM}不需要 BlackHole，也不必建立多重輸出裝置${NC}"
+        echo -e "  ${C_DIM}擷取系統音訊不需要 BlackHole，也不必建立多重輸出裝置${NC}"
+        echo -e "  ${C_DIM}只有雙向語音口譯的「念給對方聽」需要 BlackHole 2ch（brew install --cask blackhole-2ch）${NC}"
     else
         check_notice "尚未取得「螢幕錄製」權限"
         echo -e "  ${C_WHITE}ScreenCaptureKit 只擷取音訊、不會擷取畫面，但 macOS 將其歸在此權限之下${NC}"
@@ -1961,16 +1962,16 @@ do_upgrade() {
             chmod +x "$SCRIPT_DIR/install-linux.sh" 2>/dev/null || true
             build_sck_helper
             if [ -n "$handoff" ]; then
-                check_ok "已補上新版才加入的檔案（${_stale}）"
+                check_ok "已補上新版才加入的檔案（$(echo ${_stale} | sed 's/ /、/g')）"
             else
-                check_ok "已更新與最新版不符的檔案（${_stale}）"
+                check_ok "已更新與最新版不符的檔案（$(echo ${_stale} | sed 's/ /、/g')）"
             fi
         elif [ -z "$handoff" ]; then
             check_ok "已經是最新版本 (v${local_version})"
         fi
         if [ -n "$handoff" ] && [ "$(uname -s)" != "Linux" ]; then
             echo ""
-            echo -e "  ${C_WARN}建議重新執行 ./install.sh 確認相依套件完整${NC}"
+            echo -e "  ${C_WARN}建議再執行一次 ./install.sh（不加 --upgrade），補裝新版本需要的套件${NC}"
         fi
         offer_desktop_shortcut
         offer_breezy_on_upgrade
@@ -2016,7 +2017,7 @@ do_upgrade() {
         exec bash "$SCRIPT_DIR/install.sh" --upgrade
     fi
     echo ""
-    echo -e "  ${C_WARN}建議重新執行 ./install.sh 確認相依套件完整${NC}"
+    echo -e "  ${C_WARN}建議再執行一次 ./install.sh（不加 --upgrade），補裝新版本需要的套件${NC}"
     offer_desktop_shortcut
     offer_breezy_on_upgrade
     return 0

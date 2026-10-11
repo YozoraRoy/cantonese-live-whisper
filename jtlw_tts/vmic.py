@@ -819,6 +819,123 @@ def win_set_default_mic(dev_id, role):
         _com_call(pc, 2, (), restype=ctypes.c_ulong)
 
 
+def win_capture_endpoints():
+    """[(端點 ID, 名稱)]：使用中的錄音端點（MMDevice＋屬性 PKEY_Device_FriendlyName）"""
+    import ctypes
+    import uuid as _uuid
+
+    class PROPERTYKEY(ctypes.Structure):
+        _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16), ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8),
+                    ("pid", ctypes.c_uint32)]
+
+    class PROPVARIANT(ctypes.Structure):
+        _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+                    ("ptr", ctypes.c_void_p), ("pad", ctypes.c_void_p)]
+    ole32 = ctypes.OleDLL("ole32")
+    try:
+        ole32.CoInitializeEx(None, 0)
+    except OSError:
+        pass
+    C, P = _com_call, ctypes.c_void_p
+    out = []
+    en = _co_create("BCDE0395-E52F-467C-8E3D-C4579291692E", "A95664D2-9614-4F35-A746-DE8DB63617E6")
+    try:
+        col = P()
+        C(en, 3, (ctypes.c_int, ctypes.c_uint, ctypes.POINTER(P)), 1, 1, ctypes.byref(col))
+        n = ctypes.c_uint()
+        C(col, 3, (ctypes.POINTER(ctypes.c_uint),), ctypes.byref(n))
+        u = _uuid.UUID("a45c254e-df1c-4efd-8020-67d146a850e0")
+        key = PROPERTYKEY(u.fields[0], u.fields[1], u.fields[2], (ctypes.c_ubyte * 8)(*u.bytes[8:]), 14)
+        for i in range(n.value):
+            dev, ps, pv, sid = P(), P(), PROPVARIANT(), ctypes.c_wchar_p()
+            C(col, 4, (ctypes.c_uint, ctypes.POINTER(P)), i, ctypes.byref(dev))
+            try:
+                C(dev, 5, (ctypes.POINTER(ctypes.c_wchar_p),), ctypes.byref(sid))
+                C(dev, 4, (ctypes.c_uint, ctypes.POINTER(P)), 0, ctypes.byref(ps))
+                C(ps, 5, (P, P), ctypes.addressof(key), ctypes.addressof(pv))
+                name = ctypes.wstring_at(pv.ptr) if pv.vt == 31 and pv.ptr else ""
+                out.append((sid.value, name))
+                ole32.CoTaskMemFree(sid)
+                C(ps, 2, (), restype=ctypes.c_ulong)
+            finally:
+                C(dev, 2, (), restype=ctypes.c_ulong)
+        C(col, 2, (), restype=ctypes.c_ulong)
+    finally:
+        C(en, 2, (), restype=ctypes.c_ulong)
+    return out
+
+
+# 口譯期間系統預設麥克風切到口譯麥克風（v2.31.0）：狀態檔跟主程式同一個（安裝資料夾的 .interp_default_mic.json）。
+# 主程式自動偵測「我的麥克風」時讀 prev（原本預設的名稱），避免錄到口譯麥克風
+STATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".interp_default_mic.json")
+
+
+def _state_read():
+    try:
+        import json
+        with open(STATE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _state_write(d):
+    import json
+    try:
+        with open(STATE + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(STATE + ".tmp", STATE)
+    except OSError:
+        pass
+
+
+def _state_clear():
+    try:
+        os.remove(STATE)
+    except OSError:
+        pass
+
+
+def _pid_alive(pid):
+    if not pid:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(int(pid), 0)
+            return True
+        except (OSError, ValueError):
+            return False
+    import ctypes
+    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
+    if not h:
+        return False
+    code = ctypes.c_ulong()
+    ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+    ctypes.windll.kernel32.CloseHandle(h)
+    return code.value == 259
+
+
+def win_recover_default(log=None):
+    """上一次切換的小程式意外結束（沒切回）：預設還是口譯麥克風、或口譯麥克風已經不在時切回原本的。回傳有沒有切"""
+    st = _state_read()
+    if not st or _pid_alive(st.get("pid")):
+        return False
+    done = False
+    try:
+        eps = dict(win_capture_endpoints())
+        cur = win_default_mics()
+        for role, dev in (st.get("prev_ids") or {}).items():
+            role = int(role)
+            if dev in eps and (cur.get(role) == st.get("virt_id") or st.get("virt_id") not in eps):
+                win_set_default_mic(dev, role)
+                done = True
+    except Exception as e:
+        (log or (lambda m: None))(f"切回預設麥克風失敗：{type(e).__name__}: {e}")
+    _state_clear()
+    return done
+
+
 # ── 口譯麥克風小程式（Windows）────────────────────────────────────────────────
 # USB/IP 伺服器放在另一個行程：
 # - 主程式結束（WebUI 切換裝置會重開主程式）時裝置不會消失：伺服器一斷線 usbip-win2 就把裝置拔掉，會議軟體看到麥克風不見
@@ -849,8 +966,10 @@ def _recv_frame(c):
 class Helper:
     """口譯麥克風小程式本體（python vmic.py --serve）"""
 
-    def __init__(self, port=PORT, ctl_port=CTL_PORT, idle=IDLE_SEC, attach=True, log=None):
+    def __init__(self, port=PORT, ctl_port=CTL_PORT, idle=IDLE_SEC, attach=True, log=None, switch_default=False):
         self.port, self.ctl_port, self.idle, self.attach = port, ctl_port, idle, attach
+        self.switch_default = switch_default        # 口譯期間系統預設麥克風切到口譯麥克風、拔掉前切回（v2.31.0）
+        self.switched = None                        # {"prev": {角色: 端點}, "virt": 端點}
         self.log = log or (lambda m: None)
         self.mic = None
         self.exe = None
@@ -869,6 +988,7 @@ class Helper:
         m = self.mic
         return {"connected": bool(m and m.connected.is_set()), "active": bool(m and m.active()), "error": self.error,
                 "hub_port": self.hub_port, "method": self.method, "restored": self.restored, "sha": self.sha, "pid": os.getpid(),
+                "switched": bool(self.switched),
                 "clients": self.clients, "stats": dict(m.stats) if m else {}}
 
     def run(self):
@@ -1019,8 +1139,59 @@ class Helper:
             except (OSError, subprocess.SubprocessError) as e:
                 self.error = _with_sac_hint(f"usbip-win2 執行失敗：{type(e).__name__}: {e}")
                 return
-        if before:
+        if self.switch_default and os.name == "nt":
+            threading.Thread(target=self._switch_default, args=(before,), daemon=True).start()
+        elif before:
             threading.Thread(target=self._keep_default, args=(before,), daemon=True).start()
+
+    def _switch_default(self, before, secs=20):
+        """口譯麥克風接上後（Windows 列出它要幾秒）設成系統預設（一般、通訊）；原本的預設記在狀態檔，拔掉前切回"""
+        try:
+            win_recover_default(self.log)                 # 上一個小程式當掉留下的
+        except Exception:
+            pass
+        end, virt = time.monotonic() + secs, None
+        while time.monotonic() < end and not self.quit.is_set():
+            try:
+                virt = next((i for i, n in win_capture_endpoints() if PRODUCT in n), None)
+            except Exception:
+                virt = None
+            if virt:
+                break
+            time.sleep(0.5)
+        if not virt:
+            self.log("Windows 沒有列出口譯麥克風，不切換系統預設麥克風")
+            return
+        prev = {r: d for r, d in before.items() if d != virt}
+        if not prev:                                      # 一開始預設就是它（Windows 自己換的）：用狀態檔記的
+            prev = {int(r): d for r, d in ((_state_read() or {}).get("prev_ids") or {}).items()}
+        try:
+            names = dict(win_capture_endpoints())
+        except Exception:
+            names = {}
+        _state_write({"platform": "win32", "prev": names.get(prev.get(0) or prev.get(2)), "prev_ids": prev,
+                      "virt": PRODUCT, "virt_id": virt, "pid": os.getpid()})
+        self.switched = {"prev": prev, "virt": virt}
+        for role in _ROLES:
+            try:
+                win_set_default_mic(virt, role)
+            except Exception as e:
+                self.log(f"切換系統預設麥克風失敗（角色 {role}）：{type(e).__name__}: {e}")
+        self.log(f"系統預設麥克風切到口譯麥克風（原本：{names.get(prev.get(0)) or '不明'}）")
+
+    def _restore_default(self):
+        sw, self.switched = self.switched, None
+        if not sw:
+            return
+        try:
+            cur = win_default_mics()
+            for role, dev in sw["prev"].items():
+                if cur.get(int(role)) == sw["virt"]:      # 期間使用者自己改過的就不動
+                    win_set_default_mic(dev, int(role))
+            self.log("系統預設麥克風切回原本的")
+        except Exception as e:
+            self.log(f"切回系統預設麥克風失敗：{type(e).__name__}: {e}")
+        _state_clear()
 
     def _keep_default(self, before, secs=15):
         end = time.monotonic() + secs
@@ -1038,7 +1209,8 @@ class Helper:
                 return
 
     def _detach(self):
-        """先拔掉（伺服器還在，Windows 看到的是正常拔除）、再停止重試"""
+        """先切回系統預設麥克風（口譯麥克風還在時才看得出預設是不是它）、再拔掉（伺服器還在，Windows 看到的是正常拔除）、再停止重試"""
+        self._restore_default()
         if not self.attach:
             return
         drv, exe, self.drv, self.exe = self.drv, self.exe, None, None
@@ -1103,9 +1275,10 @@ class WinVirtualMic:
     start()：連到口譯麥克風小程式；沒有在跑（或是別的版本）就啟動一個，等 Windows 接上。
     close(keep)：keep＝留給下一個程式接手（WebUI 切換裝置）：只斷線，小程式 60 秒內等新的主程式；否則叫它馬上拔掉並結束"""
 
-    def __init__(self, log=None, port=PORT, ctl_port=CTL_PORT, attach=True):
+    def __init__(self, log=None, port=PORT, ctl_port=CTL_PORT, attach=True, switch_default=False):
         self.log = log or (lambda m: None)
         self.port, self.ctl_port, self.attach = port, ctl_port, attach
+        self.switch_default = switch_default
         self.mic = None                            # Client（Feeder 的 sink）
         self.helper_pid = None
 
@@ -1125,6 +1298,8 @@ class WinVirtualMic:
         args = [sys.executable, os.path.abspath(__file__), "--serve", "--port", str(self.port), "--ctl-port", str(self.ctl_port)]
         if not self.attach:
             args.append("--no-attach")
+        if self.switch_default:
+            args.append("--switch-default")
         log = os.path.join(tempfile.gettempdir(), f"jtlw-vmic-{self.port}.log")
         kw = {"stdin": subprocess.DEVNULL, "stdout": open(log, "wb"), "stderr": subprocess.STDOUT, "close_fds": True}
         if os.name == "nt":
@@ -1212,6 +1387,7 @@ def _main(argv=None):
     ap.add_argument("--ctl-port", type=int, default=CTL_PORT)
     ap.add_argument("--idle", type=float, default=IDLE_SEC)
     ap.add_argument("--no-attach", action="store_true", help="不叫 usbip-win2（測試用：由測試自己當驅動連上來）")
+    ap.add_argument("--switch-default", action="store_true", help="口譯期間系統預設麥克風切到口譯麥克風、拔掉前切回")
     a = ap.parse_args(argv)
     if not a.serve:
         ap.print_help()
@@ -1219,7 +1395,7 @@ def _main(argv=None):
 
     def log(m):
         print(time.strftime("%H:%M:%S"), m, flush=True)
-    return Helper(a.port, a.ctl_port, a.idle, attach=not a.no_attach, log=log).run()
+    return Helper(a.port, a.ctl_port, a.idle, attach=not a.no_attach, log=log, switch_default=a.switch_default).run()
 
 
 if __name__ == "__main__":

@@ -619,7 +619,7 @@ def _force_exit(code=0):
     # 結束懸浮字幕子程序（os._exit 不會觸發 atexit）
     global _overlay_proc_ref
     _webui_flush()                      # os._exit 也不會跑 atexit 的送完事件
-    if _interp_modules or _interp_vmic:  # 雙向口譯建的虛擬麥克風（atexit 不會跑，第二次 Ctrl+C／WebUI 強制停止走這裡）
+    if _interp_modules or _interp_vmic or _DEFMIC.get("active"):  # 雙向口譯建的虛擬麥克風、切過的系統預設麥克風（atexit 不會跑，第二次 Ctrl+C／WebUI 強制停止走這裡）
         try:
             _interp_linux_cleanup()
         except Exception:
@@ -800,19 +800,36 @@ def _find_wasapi_loopback():
         return None
 
 
+def _prev_default_mic_index(devices):
+    """系統預設是口譯的虛擬麥克風時（口譯期間會切過去），原本的預設在 sounddevice 的編號（依名稱；MME 名稱會被截短）"""
+    prev = _defmic_prev_name()
+    if not prev:
+        return None
+    for i, dev in enumerate(devices):
+        n = dev["name"]
+        if dev["max_input_channels"] > 0 and not _is_interp_virtual_mic(n) and (n == prev or prev.startswith(n) or n.startswith(prev)):
+            return i
+    return None
+
+
 def _find_default_mic():
-    """找到 Windows 預設麥克風（排除 Loopback 裝置）。回傳 device_id 或 None。"""
+    """找到 Windows 預設麥克風（排除 Loopback 裝置）。回傳 device_id 或 None。
+    口譯的虛擬麥克風也排除（口譯期間系統預設會切到它；錄它＝錄到自己念出去的英文），改用原本的預設"""
     import sounddevice as sd
     devices = sd.query_devices()
     # 優先使用系統預設輸入裝置
     default_in = sd.default.device[0]
     if default_in is not None and default_in >= 0:
         dev = devices[default_in]
-        if dev["max_input_channels"] > 0 and not _is_loopback_device(dev["name"]):
+        if dev["max_input_channels"] > 0 and not _is_loopback_device(dev["name"]) and not _is_interp_virtual_mic(dev["name"]):
             return default_in
+        if _is_interp_virtual_mic(dev["name"]):
+            prev = _prev_default_mic_index(devices)
+            if prev is not None:
+                return prev
     # Fallback: 找第一個非 Loopback 輸入裝置
     for i, dev in enumerate(devices):
-        if dev["max_input_channels"] > 0 and not _is_loopback_device(dev["name"]):
+        if dev["max_input_channels"] > 0 and not _is_loopback_device(dev["name"]) and not _is_interp_virtual_mic(dev["name"]):
             return i
     return None
 
@@ -839,6 +856,10 @@ def _find_mac_mic():
                 and not _is_loopback_device(dev["name"])
                 and "aggregate" not in name_lower and "聚集" not in dev["name"]):
             return default_in
+        if _is_interp_virtual_mic(dev["name"]):           # 口譯期間系統預設切到 BlackHole：用原本的預設
+            prev = _prev_default_mic_index(devices)
+            if prev is not None:
+                return prev
     for i, dev in enumerate(devices):
         name_lower = dev["name"].lower()
         if (dev["max_input_channels"] > 0
@@ -1530,6 +1551,36 @@ class _PulseLoopbackStream(_SCKLoopbackStream):
         if self._info.get("sink"):
             cmd += ["--target", self._info["sink"]]
         return cmd + ["-"]
+
+
+class _PulseSourceStream(_PulseLoopbackStream):
+    """Linux：用 parec／pw-record 錄指定的來源（麥克風）。口譯期間系統預設來源切到虛擬麥克風時，
+    「我的麥克風」要固定在原本的來源（PipeWire 的 ALSA 預設會跟著預設走，PULSE_SOURCE 也不認：2026-10-11 開發機實測）"""
+
+    def __init__(self, source, callback, samplerate=_PULSE_SAMPLERATE, channels=_PULSE_CHANNELS,
+                 blocksize=None, dtype="float32", **_ignored):
+        import numpy as np
+        self._callback = callback
+        self._samplerate = int(samplerate)
+        self._channels = int(channels)
+        self._blocksize = int(blocksize or self._samplerate * 0.1)
+        self._np = np
+        self._proc = None
+        self._thread = None
+        self._stop = threading.Event()
+        self._stderr_tail = deque(maxlen=10)
+        self._tool = _pulse_capture_tool()
+        self._info = {"source": source}
+        if not self._tool:
+            raise RuntimeError(_pulse_missing_hint())
+
+    def _command(self):
+        rate, ch = str(self._samplerate), str(self._channels)
+        if self._tool == "parec":
+            return ["parec", "--raw", "--format=float32le", f"--rate={rate}", f"--channels={ch}", "--latency-msec=50",
+                    "--client-name=jt-live-whisper", "-d", self._info["source"]]
+        return ["pw-record", "--format", "f32", "--rate", rate, "--channels", ch,
+                "-P", "{ node.name=jt-live-whisper-mic }", "--target", self._info["source"], "-"]
 
 
 # LLM 伺服器設定（預設無，由 config.json 或 --llm-host 指定）
@@ -2634,7 +2685,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.30.0"
+APP_VERSION = "2.31.0"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -10618,9 +10669,12 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
         # WebUI 停止 4 秒沒有心跳就送 SIGTERM，第二次進信號處理會直接 _force_exit，錄音要先存好
         if interp is not None:
             interp.stop(wait=0)                 # 先通知停（不等），之後裝置被移除的錯誤就不會當成失敗印出來
+            switched = bool(_DEFMIC.get("active")) or (IS_WINDOWS and _DEFMIC["on"])
             if _interp_linux_cleanup():
                 pass                            # WebUI 切換裝置：虛擬麥克風留給重新啟動的程式，會議軟體不用改
-            elif "them" in interp.lanes:
+            elif "them" in interp.lanes and IS_WINDOWS and switched:
+                print(f"\n  {C_DIM}語音口譯已停止：口譯麥克風已移除，系統預設麥克風切回原本的{RESET}", flush=True)
+            elif "them" in interp.lanes and not switched:
                 print(f"\n  {C_WARN}語音口譯已停止：會議軟體的麥克風請改回原本的麥克風，否則對方聽不到你{RESET}", flush=True)
         if recorder_lb:
             p1 = recorder_lb.close()
@@ -10661,6 +10715,10 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
     lb_stream.start()
 
     def _open_mic_stream(**extra):
+        # Linux 口譯期間系統預設來源是虛擬麥克風：經音訊伺服器的裝置（default／pulse／pipewire）會跟著預設走 → 固定原本的來源
+        if IS_LINUX and _DEFMIC.get("pin") and mic_name.split(" ")[0].lower() in ("default", "pulse", "pipewire", "sysdefault"):
+            return _PulseSourceStream(_DEFMIC["pin"], mic_audio_callback, samplerate=mic_sr, channels=mic_ch,
+                                      blocksize=extra.get("blocksize") or None)
         return sd.InputStream(
             device=mic_device_id, samplerate=mic_sr, channels=mic_ch,
             dtype="float32", callback=mic_audio_callback, **extra)
@@ -12079,11 +12137,13 @@ _INTERP_MODES = ("en_zh",)
 # macOS 安裝 BlackHole 2ch（GPL-3.0，免費）；Linux 程式自動建立；
 # Windows（v2.29.0）：安裝 usbip-win2（開放原始碼 BSD-2-Clause，核心驅動由微軟簽署），程式自己當一支 USB 麥克風（jtlw_tts/vmic.py）。
 # 常見的虛擬音效卡是捐贈軟體、公司使用要付費，授權不合適；其他開放原始碼的音訊驅動要開測試簽章模式才裝得起來
-_INTERP_MAC_NEED = "需要先安裝 BlackHole 2ch（免費，GPL-3.0）：brew install --cask blackhole-2ch，裝完重新開機；會議軟體的麥克風改選「BlackHole 2ch」"
+_INTERP_MAC_NEED = ("需要先安裝 BlackHole 2ch（免費，GPL-3.0）：brew install --cask blackhole-2ch，裝完重新開機；"
+                    "口譯期間系統預設麥克風自動切到它、結束切回（會議軟體的麥克風設成「與系統相同」）")
 _INTERP_WIN_MIC = "jt-live-whisper Interpreter Mic"
 _INTERP_WIN_NEED = ("需要先安裝 usbip-win2（免費、開放原始碼，驅動由微軟簽署）：在安裝資料夾執行 .\\install.ps1 -InterpMic；"
                     "之後開始時自動建立「" + _INTERP_WIN_MIC + "」，會議軟體的麥克風改選它")
-_INTERP_WIN_READY = "開始時自動建立「" + _INTERP_WIN_MIC + "」（usbip-win2）：會議軟體的麥克風改選它，結束後記得改回來"
+_INTERP_WIN_READY = ("開始時自動建立「" + _INTERP_WIN_MIC + "」（usbip-win2），口譯期間設成系統預設麥克風、結束切回"
+                     "（會議軟體的麥克風設成「預設」就會跟著切換）")
 _INTERP_SINK = "jtlw_interp"                 # Linux --speak-them auto 自動建立的虛擬裝置（結束時移除）
 _INTERP_SRC = "jtlw_interp_mic"
 _interp_modules = []                         # 自己載入（或接手上一次留下）的 PulseAudio 模組編號
@@ -12133,9 +12193,14 @@ def _interp_linux_cleanup():
     移除的話會議軟體會改用實體麥克風，新的建好之後也不會自己切回來，對方就聽到原聲而不是英文。回傳是不是保留了"""
     import subprocess as sp
     try:
-        keep = (_interp_modules or _interp_vmic) and time.time() - os.path.getmtime(_INTERP_KEEP_FILE) < 60
+        keep = ((_interp_modules or _interp_vmic or _DEFMIC.get("active"))
+                and time.time() - os.path.getmtime(_INTERP_KEEP_FILE) < 60)
     except OSError:
         keep = False
+    if keep:
+        _DEFMIC["active"] = None             # 系統預設麥克風留著（新的程式從狀態檔接手）：切回去會議軟體會先換成實體麥克風
+    else:
+        _defmic_restore()
     while _interp_vmic:
         # Windows：保留＝只關伺服器，usbip-win2 會一直重試、新的程式起來就接回同一個接口（同一支裝置）
         try:
@@ -12179,7 +12244,7 @@ def _interp_win_mic():
         return None, f"口譯麥克風元件不完整（{type(e).__name__}: {e}）：請再執行一次升級"
     if not vmic.usbip_installed():
         return None, _INTERP_WIN_NEED
-    m = vmic.WinVirtualMic()
+    m = vmic.WinVirtualMic(switch_default=_DEFMIC["on"])
     err = m.start()
     if err:
         return None, err
@@ -12420,6 +12485,19 @@ def _interp_build(args, mode, pause_ev=None):
             print(f"{C_HIGHLIGHT}[提示] 沒有英文聲音（從舊版第一次升級拿不到，再執行一次升級就有），先用台灣華語的聲音念英文（會有口音）{RESET}")
         lanes[lane] = {"rate": float(rate), "voice": v, "lang": lang}
         devices[lane] = d
+    them = devices.get(I.THEM)
+    if them and not IS_WINDOWS:                    # Windows 由口譯麥克風小程式切（_interp_win_mic）
+        virt = None
+        if them[0] == "sd" and them[1] is not None:
+            import sounddevice as sd
+            virt = sd.query_devices(them[1])["name"]   # macOS：送進 BlackHole 2ch，會議軟體從同名的輸入收
+            if not _is_interp_virtual_mic(virt):      # 認不得的裝置：自動偵測「我的麥克風」排除不了它，不切
+                print(f"  {C_DIM}[口譯] 「{virt}」不是 BlackHole：不自動切換系統預設麥克風，會議軟體的麥克風請自己選它{RESET}")
+                virt = None
+        elif them[0] == "pulse" and them[1] == _INTERP_SINK:
+            virt = _INTERP_SRC
+        if virt:
+            _defmic_switch(virt)
     pace = I.Pace()
 
     def synth(item, rate):
@@ -12548,6 +12626,226 @@ def _ask_interp(args, mode):
             args.passthrough = True
     if not (args.speak_me or args.speak_them):
         print(f"  {C_DIM}→ 不念（只顯示字幕）{RESET}")
+
+
+# ── 口譯期間把系統預設麥克風切到虛擬麥克風、結束切回（v2.31.0；2026-10-11 使用者：「選口譯時會自動選 BlackHole，
+# 如果不是需要口譯要改回各自應有的預設值，不是讓使用者自己選」→ 選「自動切換系統預設」）──
+# 會議軟體的麥克風設成「與系統相同／預設」就跟著切換，不用每次自己選、自己改回。只有念給對方聽才切。
+# 原本的預設記在狀態檔（WebUI 切換裝置時新的程式要讀，那時預設已經是虛擬麥克風）；結束時只有預設還是虛擬麥克風才切回
+# （期間使用者自己改過就不動）；切換的程式意外結束時，下一次啟動補切回。Windows 由口譯麥克風小程式切（jtlw_tts/vmic.py）。
+# 我們自己錄麥克風的那一路不可以跟著預設走：自動偵測排除虛擬麥克風、改用原本的預設；Linux 改用 parec 指定原本的來源
+_DEFMIC_STATE = os.path.join(SCRIPT_DIR, ".interp_default_mic.json")
+_DEFMIC = {"on": True, "active": None, "pin": None}   # active：這一場切過的 {"prev": 名稱, "virt": 名稱}；pin：Linux 錄麥克風固定的來源
+
+
+def _is_interp_virtual_mic(name):
+    """口譯用的虛擬麥克風（自動偵測「我的麥克風」時要排除：錄到的是自己念出去的英文）。
+    Windows 的 MME 名稱只有 31 個字（「Microphone (jt-live-whisper Int」）"""
+    n = (name or "").lower()
+    return "blackhole" in n or "jt-live-whisper int" in n or "jtlw_interp" in n or "jt-live-whisper-interpreter" in n
+
+
+def _defmic_read():
+    try:
+        with open(_DEFMIC_STATE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _defmic_write(d):
+    try:
+        tmp = _DEFMIC_STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, _DEFMIC_STATE)
+    except OSError:
+        pass
+
+
+def _defmic_clear():
+    try:
+        os.remove(_DEFMIC_STATE)
+    except OSError:
+        pass
+
+
+def _pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        if IS_WINDOWS:
+            import ctypes
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            ctypes.windll.kernel32.CloseHandle(h)
+            return code.value == 259                                          # STILL_ACTIVE
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+# macOS：CoreAudio（ctypes，不用另外裝東西）
+def _mac_ca():
+    import ctypes
+    ca = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+    cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+    cf.CFRelease.argtypes = [ctypes.c_void_p]
+
+    class Addr(ctypes.Structure):
+        _fields_ = [("sel", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("elem", ctypes.c_uint32)]
+
+    def fcc(x):
+        return int.from_bytes(x.encode(), "big")
+
+    def get(obj, sel, scope="glob"):
+        a, size = Addr(fcc(sel), fcc(scope), 0), ctypes.c_uint32(0)
+        if ca.AudioObjectGetPropertyDataSize(ctypes.c_uint32(obj), ctypes.byref(a), 0, None, ctypes.byref(size)) != 0:
+            return b""
+        buf = ctypes.create_string_buffer(size.value)
+        if ca.AudioObjectGetPropertyData(ctypes.c_uint32(obj), ctypes.byref(a), 0, None, ctypes.byref(size), buf) != 0:
+            return b""
+        return buf.raw[:size.value]
+
+    def cfstr(obj, sel):
+        raw = get(obj, sel)
+        if len(raw) < ctypes.sizeof(ctypes.c_void_p):
+            return ""
+        ref = ctypes.c_void_p.from_buffer_copy(raw).value
+        if not ref:
+            return ""
+        out = ctypes.create_string_buffer(1024)
+        ok = cf.CFStringGetCString(ref, out, 1024, 0x08000100)
+        cf.CFRelease(ref)
+        return out.value.decode("utf-8", "replace") if ok else ""
+
+    def set_default_input(dev):
+        a, v = Addr(fcc("dIn "), fcc("glob"), 0), ctypes.c_uint32(dev)
+        return ca.AudioObjectSetPropertyData(ctypes.c_uint32(1), ctypes.byref(a), 0, None, 4, ctypes.byref(v)) == 0
+    return ctypes, get, cfstr, set_default_input
+
+
+def _mac_inputs():
+    """[(id, 名稱, uid)]：有輸入聲道的裝置"""
+    import struct as _st
+    ctypes, get, cfstr, _ = _mac_ca()
+    raw = get(1, "dev#")
+    out = []
+    for dev in _st.unpack(f"{len(raw) // 4}I", raw):
+        if get(dev, "stm#", "inpt"):
+            out.append((dev, cfstr(dev, "lnam"), cfstr(dev, "uid ")))
+    return out
+
+
+def _mac_default_input():
+    import struct as _st
+    _, get, _, _ = _mac_ca()
+    raw = get(1, "dIn ")
+    return _st.unpack("I", raw)[0] if len(raw) == 4 else None
+
+
+def _defmic_get():
+    """目前的系統預設麥克風名稱（Linux＝PulseAudio／PipeWire 的來源名稱）；拿不到回 None"""
+    if IS_MACOS:
+        d = _mac_default_input()
+        return next((n for i, n, _ in _mac_inputs() if i == d), None)
+    if IS_LINUX:
+        try:
+            r = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, timeout=5)
+            return r.stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            return None
+    return None
+
+
+def _defmic_set(name):
+    if IS_MACOS:
+        dev = next((i for i, n, _ in _mac_inputs() if n == name), None)
+        return dev is not None and _mac_ca()[3](dev)
+    if IS_LINUX:
+        try:
+            return subprocess.run(["pactl", "set-default-source", name], capture_output=True, timeout=5).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return False
+
+
+def _defmic_switch(virt):
+    """口譯開始：系統預設麥克風切到 virt（macOS 裝置名稱／Linux 來源名稱）。Windows 由小程式切"""
+    if not _DEFMIC["on"] or IS_WINDOWS:
+        return
+    try:
+        cur = _defmic_get()
+    except Exception:
+        cur = None
+    if cur is None:
+        print(f"  {C_DIM}[口譯] 讀不到系統預設麥克風，不自動切換（會議軟體的麥克風請自己選「{virt}」）{RESET}")
+        return
+    st = _defmic_read() or {}
+    prev = cur if cur != virt else st.get("prev")      # 已經是虛擬麥克風：WebUI 切換裝置、上一場沒切回 → 用記下的
+    if not prev or _is_interp_virtual_mic(prev):
+        prev = None
+    _defmic_write({"platform": sys.platform, "prev": prev, "virt": virt, "pid": os.getpid(), "t": time.time()})
+    _DEFMIC["active"] = {"prev": prev, "virt": virt}
+    if not _interp_atexit[0]:                      # macOS 沒有建立任何裝置，原本不會登記收尾
+        _interp_atexit[0] = True
+        atexit.register(_interp_linux_cleanup)
+    if IS_LINUX and prev:
+        _DEFMIC["pin"] = prev
+    ok = cur == virt or _defmic_set(virt)
+    if ok:
+        print(f"  {C_DIM}[口譯] 系統預設麥克風：{prev or '（不明）'} → {virt}，結束後自動切回"
+              f"（會議軟體的麥克風設成「與系統相同」就會跟著切換；不要的話加 --no-switch-default-mic）{RESET}")
+    else:
+        print(f"  {C_HIGHLIGHT}[口譯] 系統預設麥克風切換失敗：會議軟體的麥克風請自己選「{virt}」{RESET}")
+
+
+def _defmic_restore():
+    """口譯結束（不是 WebUI 切換裝置）：預設還是虛擬麥克風才切回原本的"""
+    a = _DEFMIC.get("active")
+    _DEFMIC["active"] = None
+    if not a:
+        return
+    try:
+        if a["prev"] and _defmic_get() == a["virt"]:
+            if _defmic_set(a["prev"]):
+                print(f"  {C_DIM}[口譯] 系統預設麥克風已切回 {a['prev']}{RESET}")
+    except Exception:
+        pass
+    _defmic_clear()
+
+
+def _defmic_recover():
+    """上一次切換的程式意外結束（沒切回）：這次啟動時補切回。Windows 的小程式自己處理（看它還在不在）"""
+    st = _defmic_read()
+    if not st or _pid_alive(st.get("pid")):
+        return
+    if IS_WINDOWS:
+        try:
+            from jtlw_tts import vmic
+            if vmic.win_recover_default():
+                print(f"  {C_DIM}[口譯] 上一次口譯沒有切回系統預設麥克風，已切回 {st.get('prev') or '原本的'}{RESET}")
+        except Exception:
+            pass
+        return
+    try:
+        if st.get("prev") and _defmic_get() == st.get("virt") and _defmic_set(st["prev"]):
+            print(f"  {C_DIM}[口譯] 上一次口譯沒有切回系統預設麥克風，已切回 {st['prev']}{RESET}")
+    except Exception:
+        pass
+    _defmic_clear()
+
+
+def _defmic_prev_name():
+    """自動偵測「我的麥克風」時：系統預設是虛擬麥克風的話，原本的預設叫什麼（狀態檔）"""
+    st = _DEFMIC.get("active") or _defmic_read() or {}
+    return st.get("prev")
 
 
 _interp_print_lock = threading.Lock()
@@ -18263,6 +18561,9 @@ def parse_args():
     ip.add_argument("--interp-intro", default=None, metavar="TEXT",
                     help="第一次念給對方聽之前先念的開場說明（預設："
                          "\"Hi, I'm using an AI interpreter, so there will be a short delay.\"；none＝不念）")
+    ip.add_argument("--no-switch-default-mic", action="store_true",
+                    help="念給對方聽時不自動切換系統預設麥克風（預設會在口譯期間切到虛擬麥克風、結束切回；"
+                         "會議軟體的麥克風設成「與系統相同」就會跟著切換）")
     ip.add_argument("--passthrough", action="store_true",
                     help="念給對方聽時，你的原聲也同時送進虛擬麥克風（念英文時原聲自動調小）。預設只送英文")
     return parser.parse_args()
@@ -18516,6 +18817,13 @@ def main():
         sys.exit(1)
     _diarize_engine = args.diarize_engine
     _KEEP_AWAKE["on"] = not args.no_keep_awake
+    _DEFMIC["on"] = not args.no_switch_default_mic
+    try:
+        _handoff = time.time() - os.path.getmtime(_INTERP_KEEP_FILE) < 60     # WebUI 切換裝置：新的程式會接手，不要先切回
+    except OSError:
+        _handoff = False
+    if not _handoff:
+        _defmic_recover()
     if args.model == QWEN_MODEL and not args.input:
         print(f"{C_HIGHLIGHT}[提示] Qwen3-ASR 只支援離線處理（--input），即時模式改用推薦模型{RESET}")
         args.model = None

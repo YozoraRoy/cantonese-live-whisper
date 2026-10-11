@@ -761,7 +761,7 @@ $banner_line = '=' * $cols
 if (-not $env:JTLW_UPGRADE_REPO) {          # 升級時交給新版接手的那一次不再印標題（同一個畫面）
 Write-Host ""
 Write-Host "${C_TITLE}${banner_line}${NC}"
-Write-Host "${C_TITLE}${BOLD}  jt-live-whisper v2.30.0 - 100% 全地端 AI 語音工具箱 - Windows 安裝程式${NC}"
+Write-Host "${C_TITLE}${BOLD}  jt-live-whisper v2.31.0 - 100% 全地端 AI 語音工具箱 - Windows 安裝程式${NC}"
 Write-Host "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
 Write-Host "${C_TITLE}${banner_line}${NC}"
 Write-Host ""
@@ -884,7 +884,7 @@ if ($Upgrade) {
         }
         if ($handoff) {
             Write-Host ""
-            Write-Host "  ${C_WARN}建議重新執行 .\install.ps1 確認相依套件完整${NC}"
+            Write-Host "  ${C_WARN}建議再執行一次 .\install.ps1（不加 -Upgrade），補裝新版本需要的套件${NC}"
         }
         if ($tmpDir) { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
         $null = ensure_script_execution          # 升級上來的機器也要能直接打 .\start.ps1（v2.27.0）
@@ -949,7 +949,7 @@ if ($Upgrade) {
     }
     if ($tmpDir) { Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue }
     Write-Host ""
-    Write-Host "  ${C_WARN}建議重新執行 .\install.ps1 確認相依套件完整${NC}"
+    Write-Host "  ${C_WARN}建議再執行一次 .\install.ps1（不加 -Upgrade），補裝新版本需要的套件${NC}"
     $null = ensure_script_execution
     offer_desktop_shortcut
     offer_breezy_on_upgrade

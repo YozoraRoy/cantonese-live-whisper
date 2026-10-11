@@ -39,6 +39,7 @@
     <span class="page-nav-label"><span class="zh">本頁</span><span class="en">On this page</span></span>
     <a href="#req"><span class="zh">系統需求</span><span class="en">Requirements</span></a>
     <a href="#quickstart"><span class="zh">快速開始</span><span class="en">Quick start</span></a>
+    <a href="#upgrade"><span class="zh">升級</span><span class="en">Upgrade</span></a>
     <a href="#usage"><span class="zh">使用方式</span><span class="en">Usage</span></a>
     <a href="#cli">CLI</a>
     <a href="#hardware"><span class="zh">硬體建議</span><span class="en">Hardware</span></a>
@@ -61,7 +62,7 @@
   <div class="wrap">
     <div class="sec-head"><h2><span class="zh">系統需求</span><span class="en">System requirements</span></h2></div>
     <div class="grid g2">
-      <div class="card"><h3><span class="badge">A</span>macOS</h3><p><span class="zh">macOS（Apple Silicon / Intel）· Python 3.12+ · <a href="https://brew.sh/" target="_blank" rel="noopener">Homebrew</a>（需事先安裝）· <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener">BlackHole 2ch</a>（虛擬音訊驅動，<b>選配</b>；macOS 13 以上預設用內建 ScreenCaptureKit，免安裝驅動）</span><span class="en">macOS (Apple Silicon / Intel) · Python 3.12+ · <a href="https://brew.sh/" target="_blank" rel="noopener">Homebrew</a> (pre-installed) · <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener">BlackHole 2ch</a> (<b>optional</b>; macOS 13+ uses the built-in ScreenCaptureKit, no driver needed)</span></p></div>
+      <div class="card"><h3><span class="badge">A</span>macOS</h3><p><span class="zh">macOS（Apple Silicon / Intel）· Python 3.12+ · <a href="https://brew.sh/" target="_blank" rel="noopener">Homebrew</a>（需事先安裝）· <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener">BlackHole 2ch</a>（虛擬音訊驅動：擷取系統音訊在 macOS 13 以上用內建 ScreenCaptureKit，不用裝；<b>雙向語音口譯的「念給對方聽」需要它</b>）</span><span class="en">macOS (Apple Silicon / Intel) · Python 3.12+ · <a href="https://brew.sh/" target="_blank" rel="noopener">Homebrew</a> (pre-installed) · <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener">BlackHole 2ch</a> (capturing system audio on macOS 13+ uses the built-in ScreenCaptureKit, no driver needed; <b>required for the speak-to-the-other-side part of two-way voice interpretation</b>)</span></p></div>
       <div class="card"><h3><span class="badge">B</span>Windows</h3><p><span class="zh">Windows 10 以上 · Python 3.12+（從 <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a> 安裝，勾選「Add to PATH」）· PowerShell 5.1+（Windows 10 內建）</span><span class="en">Windows 10+ · Python 3.12+ (from <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org</a>, check "Add to PATH") · PowerShell 5.1+ (built in)</span></p></div>
       <div class="card"><h3><span class="badge">C</span>Linux</h3><p><span class="zh">Ubuntu 22.04 / Debian 12 以上（其他發行版需自行安裝系統套件）· Python 3.10+（含 python3-venv）· 桌面版使用 PipeWire 或 PulseAudio，<b>免裝虛擬音效卡</b>；無桌面主機可安裝伺服器版（WebUI 以 systemd 常駐）</span><span class="en">Ubuntu 22.04 / Debian 12+ (other distros: install system packages manually) · Python 3.10+ (with python3-venv) · Desktop uses PipeWire or PulseAudio, <b>no virtual sound card</b>; headless hosts can use the server edition (WebUI as a systemd service)</span></p></div>
       <div class="card"><h3><span class="badge">D</span><span class="zh">共通</span><span class="en">Common</span></h3><p><span class="zh">地端 LLM 伺服器（翻譯 / 摘要用，推薦 <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a>）。<b>沒有 LLM 伺服器也能用</b>：可切換為 NLLB / Argos 離線翻譯，但摘要功能需要 LLM。</span><span class="en">A local LLM server (for translation/summary; <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a> recommended). <b>Works without one</b> via NLLB / Argos offline translation, but summaries need an LLM.</span></p></div>
@@ -169,6 +170,15 @@ cd ~/Apps/jt-live-whisper
 cd C:\jt-live-whisper
 .\start.ps1</pre>
     <p style="font-size:14px;color:var(--body)"><span class="zh">程式進入互動式選單，依序選擇功能模式、翻譯引擎、AI 辨識模型等。音訊裝置全自動偵測，不需手動選擇。</span><span class="en">The interactive menu walks you through mode, translation engine and model. Audio devices are auto-detected.</span></p>
+
+    <h3 id="upgrade" style="margin:28px 0 10px"><span class="zh">已經裝過：升級到最新版</span><span class="en">Already installed: upgrade</span></h3>
+<pre><span class="c"># macOS / Linux</span>
+cd ~/Apps/jt-live-whisper
+./install.sh --upgrade
+<span class="c"># Windows (PowerShell)</span>
+cd C:\jt-live-whisper
+.\install.ps1 -Upgrade</pre>
+    <p class="note"><span class="zh">上面是預設的安裝資料夾，裝在別的地方就切到你的安裝資料夾。升級會從 GitHub 下載最新版，<b>執行一次就好</b>。<b>升級完把開著的 WebUI 關掉再重新啟動</b>，開著的還在跑舊程式（Linux 伺服器版會自動重啟服務）。macOS 與 Windows 升級後請再執行一次安裝腳本（<code>./install.sh</code>／<code>.\install.ps1</code>，<b>不加</b> <code>--upgrade</code>），新版本需要的套件才會裝上；Linux 會自動補。Windows 若顯示「已停用指令碼執行」，改用 <code>powershell -ExecutionPolicy Bypass -File install.ps1 -Upgrade</code>。</span><span class="en">These are the default install folders; if you installed elsewhere, cd into your install folder. The upgrade pulls the latest version from GitHub; <b>one run is enough</b>. <b>Close any running Web UI and start it again afterwards</b>, it is still running the old code (the Linux server edition restarts its service automatically). On macOS and Windows, run the installer once more (<code>./install.sh</code> / <code>.\install.ps1</code>, <b>without</b> <code>--upgrade</code>) so packages the new version needs get installed; Linux does this automatically. If Windows says running scripts is disabled, use <code>powershell -ExecutionPolicy Bypass -File install.ps1 -Upgrade</code>.</span></p>
   </div>
 </section>
 
@@ -542,14 +552,6 @@ curl -s http://localhost:8978/health   <span class="c"># 1~3 分鐘後 "qwen": {
       </tbody>
     </table></div>
 
-    <h3 style="margin:34px 0 10px"><span class="zh">升級</span><span class="en">Upgrade</span></h3>
-<pre><span class="c"># macOS / Linux：先切到安裝資料夾</span>
-cd ~/Apps/jt-live-whisper
-./install.sh --upgrade
-<span class="c"># Windows (PowerShell)：先切到安裝資料夾</span>
-cd C:\jt-live-whisper
-.\install.ps1 -Upgrade</pre>
-    <p style="font-size:14px;color:var(--body)"><span class="zh">上面是預設的安裝位置，裝在別的地方就切到你的安裝資料夾。升級會自動從 GitHub 下載最新版本；Linux 接著會自動檢查並補齊相依套件，macOS 與 Windows 升級後請再執行一次安裝腳本（<code>./install.sh</code>／<code>.\install.ps1</code>），新版本需要的套件才會裝上。</span><span class="en">These are the default install locations; if you installed elsewhere, cd into your install folder. The upgrade pulls the latest from GitHub; on Linux it then checks and installs dependencies automatically, while on macOS and Windows you should run the installer once more (<code>./install.sh</code> / <code>.\install.ps1</code>) to add packages the new version needs.</span></p>
   </div>
 </section>
 
