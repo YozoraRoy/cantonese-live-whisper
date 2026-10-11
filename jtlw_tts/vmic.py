@@ -478,6 +478,8 @@ class Feeder:
 INSTALL_URL = "https://github.com/vadimgrn/usbip-win2/releases"
 CTL_PORT = int(os.environ.get("JTLW_VMIC_CTL_PORT") or PORT + 9)   # 口譯麥克風小程式的控制埠（主程式送聲音、問狀態）
 IDLE_SEC = 60                       # 沒有主程式連著多久就拔掉、結束（WebUI 切換裝置重開主程式約幾秒；跟 .webui_interp_keep 的 60 秒一致）
+IN_USE = ("口譯麥克風正在被另一個 jt-live-whisper 使用（同一台電腦一次只能有一個程式念給對方聽）："
+          "先停止那一個再開始")
 
 
 def usbip_exe():
@@ -701,6 +703,41 @@ def win_sac_state():
         return None
 
 
+def _high_res_timer():
+    """Windows：讓小程式的等時封包準時送。兩件事都要（2026-10-11 pc-002，螢幕解鎖、會議軟體用的共用模式每秒收到的取樣數）：
+    - 計時器精度調到 1 ms（timeBeginPeriod；Windows 10 2004 起只影響呼叫的行程）。預設約 15.6 ms：每 10 ms 一個的封包擠在一起成批送，
+      平均量對、時間抖，Windows 音訊引擎每隔約 1 秒丟 8 ms，對方聽到斷音
+    - **關掉這個行程的省電節流**（SetProcessInformation ProcessPowerThrottling，含 IGNORE_TIMER_RESOLUTION）：
+      Windows 11 對看不到、沒出聲的行程（小程式沒有視窗）不保證給它要求的計時器精度——只調精度時 47,663，兩件都做 47,999。
+      螢幕鎖定時不受這條影響，所以只在鎖定時量會以為修好了
+    同樣的程式在有開錄音串流的行程裡（測試程式；PortAudio 會調精度、Windows 也當它在用音訊）本來就是 48,000"""
+    if os.name != "nt":
+        return False
+    import ctypes
+    ok = False
+    try:
+        ok = ctypes.windll.winmm.timeBeginPeriod(1) == 0
+    except Exception:
+        pass
+
+    class _PowerThrottling(ctypes.Structure):
+        _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        # ControlMask＝要自己管的項目、StateMask＝0：執行速度（EcoQoS）與計時器精度都不要節流；
+        # IGNORE_TIMER_RESOLUTION（4）是 Windows 11 才有，Windows 10 不認得時只關執行速度（Windows 10 沒有這條規則）
+        for mask in (0x1 | 0x4, 0x1):
+            st = _PowerThrottling(1, mask, 0)
+            if k32.SetProcessInformation(ctypes.c_void_p(k32.GetCurrentProcess()), 4, ctypes.byref(st), ctypes.sizeof(st)):
+                break
+        else:
+            ok = False
+    except Exception:
+        ok = False
+    return ok
+
+
 def _with_sac_hint(msg):
     return msg + ("。" + SAC_HINT if win_sac_state() == "on" else "")
 
@@ -832,7 +869,7 @@ class Helper:
         m = self.mic
         return {"connected": bool(m and m.connected.is_set()), "active": bool(m and m.active()), "error": self.error,
                 "hub_port": self.hub_port, "method": self.method, "restored": self.restored, "sha": self.sha, "pid": os.getpid(),
-                "stats": dict(m.stats) if m else {}}
+                "clients": self.clients, "stats": dict(m.stats) if m else {}}
 
     def run(self):
         if os.name == "nt":
@@ -842,6 +879,7 @@ class Helper:
                 ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
             except Exception:
                 pass
+            _high_res_timer()
         # 上一個小程式剛結束時埠號可能還沒放出來（TIME_WAIT）：重試幾秒
         ctl = err = None
         for _ in range(20):
@@ -1103,6 +1141,12 @@ class WinVirtualMic:
         if cl:
             try:
                 st = cl.status()
+                # 已經有別的主程式連著（同一台開了兩份）：不共用、也不換掉它——先結束的那份會把麥克風拔掉、
+                # 換掉會讓那份會議中麥克風消失（2026-10-11 pc-002 實測）。問狀態的這個連線自己也算一個；
+                # 舊版小程式沒有 clients＝不知道，照舊
+                if (st.get("clients") or 1) > 1:
+                    cl.c.close()
+                    return IN_USE
                 if st.get("sha") != _self_sha():          # 別的版本留下的：叫它結束，換自己的
                     cl.quit()
                     cl.c.close()
