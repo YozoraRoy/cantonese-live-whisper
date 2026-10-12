@@ -2,4 +2,4 @@
 from .engine import (DEFAULT_MODEL, GENDERS, MODELS, PAUSES, RATE_MAX, RATE_MIN, TEXT_EXTS, MlxProvider, RemoteProvider,  # noqa: F401
                      Session, TTSError, default_en_voice_id, default_voice_id, delete_voice, flush_pending_deletes, get_voice, import_voice, list_voices, load_text, pcm_wav,
                      pick_provider, prepare_text, public_voice, reading_text, set_voice_gender, settings,
-                     summary_reading_text, sweep_tmp, to_pcm, wav_pcm)
+                     stream_tempo, summary_reading_text, sweep_tmp, to_pcm, wav_pcm)

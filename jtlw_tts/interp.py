@@ -34,6 +34,7 @@ DOWN_SEC = 30.0                    # GPU 伺服器連不上（OSError：拒絕�
 INTRO_EN = "Hi, I'm using an AI interpreter, so there will be a short delay."
 
 _KEEP = re.compile(r"[0-9a-z぀-ヿ㐀-鿿가-힯]+")
+_CJK = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
 
 
 def norm(text):
@@ -203,6 +204,20 @@ def after_prefix(old, new):
     return None
 
 
+def finishes(old, new):
+    """new 是 old 說完的版本（看原文）：滑動視窗先辨識到前半句、下一次拿到整句。開頭跟 old 一樣（70% 以上，
+    或只有最後 2 個中日韓字／4 個字母不同：前半句的結尾常被切在字中間而聽錯，「沒問題，我心情」→「沒問題，我星期五之前…」），
+    至少一半相同、而且比 old 長。webui.html 的 _mergeTarget（整句取代半句的泡泡）用同一條規則"""
+    o, n = norm(old), norm(new)
+    if len(o) < 2 or len(n) <= len(o):
+        return False
+    k = 0
+    while k < len(o) and o[k] == n[k]:
+        k += 1
+    tail = 2 if _CJK.search(o) else 4
+    return k >= 2 and k * 2 >= len(o) and (k * 10 >= len(o) * 7 or k >= len(o) - tail)
+
+
 class Item:
     __slots__ = ("id", "lane", "text", "src", "created", "state")
 
@@ -258,9 +273,11 @@ class Interpreter:
             return item.id
         replaced, full = [], text
         with self._cv:
-            # 同一句話先辨識到一小段、再辨識到整句：還沒念的那一小段換成整句；已經念了的，整句只念後面多出來的
+            # 同一句話先辨識到一小段、再辨識到整句：還沒念的那一小段換成整句；已經念了的，整句只念後面多出來的。
+            # 譯文不一定是前後接得起來的（「目前正在」→ Currently being；整句 → The final testing is ...），所以也看原文（finishes）
             for old in list(self._q[lane]):
-                if old.state == "queued" and (after_prefix(old.text, text) is not None or norm(old.text) == norm(text)):
+                if old.state == "queued" and (after_prefix(old.text, text) is not None or norm(old.text) == norm(text)
+                                              or (old.src and src and finishes(old.src, src))):
                     self._q[lane].remove(old)
                     old.state = "replaced"
                     replaced.append(old)
@@ -299,6 +316,15 @@ class Interpreter:
             item.state = "canceled"
         self._emit(item, "canceled")
         return True
+
+    def set_rate(self, lane, rate):
+        """口譯中改語速（WebUI 字幕頁底部的 − ＋，2026-10-12 使用者：「已經雙向口譯可以改語速嗎」）：
+        下一句開始生效（正在念的那句不變）；限 0.5～2 倍（ffmpeg atempo 單一濾鏡的範圍）。回傳實際設定的值"""
+        if lane not in self.lanes:
+            return None
+        r = round(min(2.0, max(0.5, float(rate))), 2)
+        self.lanes[lane]["rate"] = r
+        return r
 
     def mute(self, lane, on=True):
         """只停語音，字幕照舊；靜音時排著的也不念了"""

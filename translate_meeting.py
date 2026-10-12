@@ -812,6 +812,50 @@ def _prev_default_mic_index(devices):
     return None
 
 
+def _win_stable_mic(idx):
+    """Windows：把 MME／DirectSound 的麥克風編號換成同一支麥克風的 WASAPI 編號（找不到、分不出來就照舊）。
+
+    MME 與 DirectSound 的裝置順序跟著「系統預設麥克風」排，PortAudio 在程式啟動時記下編號；念給對方聽期間系統預設會切到
+    口譯麥克風（v2.31.0；接上它時 Windows 自己也會先換），舊編號開出來的就變成別支麥克風——2026-10-12 pc-002 實測：
+    同一個 MME 編號換預設之前錄到 0.032、之後 0.0001（錄到另一支沒聲音的），WASAPI 用端點 ID 不受影響。
+    「音效對應表」「主要音效擷取驅動程式」本來就跟著系統預設走（口譯期間＝錄到自己念的英文）：換成原本預設的那支"""
+    if not IS_WINDOWS or idx is None or idx < 0:
+        return idx
+    import sounddevice as sd
+    try:
+        devs = sd.query_devices()
+        apis = sd.query_hostapis()
+        api = apis[devs[idx]["hostapi"]]["name"]
+        w = next(i for i, h in enumerate(apis) if "WASAPI" in h["name"])
+    except Exception:
+        return idx
+    if "MME" not in api and "DirectSound" not in api:
+        return idx
+    ins = [i for i, x in enumerate(devs) if x["hostapi"] == w and x["max_input_channels"] > 0
+           and not _is_loopback_device(x["name"]) and not _is_interp_virtual_mic(x["name"])]
+
+    def same(name):                                                 # MME 的名稱會被截到 31 字：用開頭比
+        return [i for i in ins if devs[i]["name"] == name] or [i for i in ins if devs[i]["name"].startswith(name)]
+
+    hit = same(devs[idx]["name"])
+    if len(hit) == 1:
+        return hit[0]
+    if hit:                                                        # 同名的不只一支：分不出來，照舊
+        return idx
+    # 沒有同名的＝對應表／主要擷取驅動程式（跟著系統預設走）：WASAPI 的預設輸入就是程式啟動時的系統預設
+    d = apis[w].get("default_input_device", -1)
+    if d is not None and d >= 0 and d in ins:
+        return d
+    prev = _prev_default_mic_index(devs)                         # 啟動時預設已經是口譯麥克風（WebUI 切換裝置）：用原本的
+    if prev is not None:
+        if prev in ins:
+            return prev
+        hit = same(devs[prev]["name"])
+        if len(hit) == 1:
+            return hit[0]
+    return idx
+
+
 def _find_default_mic():
     """找到 Windows 預設麥克風（排除 Loopback 裝置）。回傳 device_id 或 None。
     口譯的虛擬麥克風也排除（口譯期間系統預設會切到它；錄它＝錄到自己念出去的英文），改用原本的預設"""
@@ -2685,7 +2729,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.31.2"
+APP_VERSION = "2.31.3"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -9603,6 +9647,46 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
 #  雙向即時翻譯（en_zh / ja_zh: 系統音訊翻譯 + 麥克風反向翻譯）
 # ═══════════════════════════════════════════════════════════════════
 
+def _bidi_extends(prev, text, more=None):
+    """新的一段把上一段說完了嗎（滑動視窗先辨識到前半句，下一個視窗才拿到整句）：開頭跟上一段一樣、而且多出至少 more 個字
+    （不算標點與空白；預設中日韓 2 個字、其他 4 個字母：「目前正在做最後的」→「目前正在做最後的測試」只多兩個字，2026-10-12 示範被丟掉）"""
+    from difflib import SequenceMatcher
+    p, t = re.sub(r"[\W_]+", "", prev), re.sub(r"[\W_]+", "", text)
+    if more is None:
+        more = 2 if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", t) else 4
+    if not p or len(t) - len(p) < more:
+        return False
+    return p in t or SequenceMatcher(None, p, t[:len(p)]).ratio() >= 0.8
+
+
+def _bidi_is_duplicate(text, recent):
+    """雙向模式：這一段跟最近顯示過的是不是同一句（滑動視窗重疊，同一句會被辨識好幾次）。
+
+    把前半句說完的整句不算重複（2026-10-12 兩台電腦開會示範：「沒問題，我星期五之前」先出來，整句
+    「沒問題，我星期五之前會把測試報告寄給你」跟它相似度 0.69 被當成重複丟掉，字幕停在半句、口譯只念了半句，對方沒聽到後半）。
+    整句照樣顯示，口譯那邊把念過的前半句扣掉、只念多出來的（jtlw_tts.interp）"""
+    from difflib import SequenceMatcher
+    text_lower = text.lower().strip()
+    if not text_lower:
+        return True
+    for prev in recent:
+        if text_lower == prev:
+            return True
+        if _bidi_extends(prev, text_lower):
+            continue
+        # 子字串比對：重疊度 > 70% 時算重複
+        shorter = min(len(text_lower), len(prev))
+        longer = max(len(text_lower), len(prev))
+        if shorter > 0 and (text_lower in prev or prev in text_lower):
+            if shorter / longer > 0.7:
+                return True
+        # 字元相似度比對：滑動視窗重疊導致文字略有不同但內容重複
+        # shorter >= 8 避免短句誤判（如「中文測試」vs「英文測試」ratio=0.75）
+        if shorter >= 8 and SequenceMatcher(None, text_lower, prev).ratio() > 0.6:
+            return True
+    return False
+
+
 @_keep_awake_during
 def run_stream_bidirectional(lb_device_id, mic_device_id,
                               translator_lb, translator_mic,
@@ -9867,6 +9951,13 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
     else:
         lb_name = sd.query_devices(lb_device_id)["name"]
 
+    if IS_WINDOWS and interp is not None and "them" in getattr(interp, "lanes", ()):
+        _stable = _win_stable_mic(mic_device_id)
+        if _stable != mic_device_id:
+            print(f"{C_DIM}  麥克風改用 WASAPI 開啟：{sd.query_devices(_stable)['name']}"
+                  f"（念給對方聽期間系統預設麥克風會切換，MME／DirectSound 的編號會跟著變成別支）{RESET}")
+            mic_device_id = _stable
+
     mic_info = sd.query_devices(mic_device_id)
     mic_sr = int(mic_info["default_samplerate"])
     mic_ch = min(mic_info["max_input_channels"], 2)
@@ -9962,6 +10053,8 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
         interp.audio.pause_ev = pause_event          # 暫停時語音也停
         interp.on_event = lambda e: _interp_event(e, print_lock)
         interp.start()
+        for _l, _L in interp.lanes.items():          # WebUI 字幕頁的語速顯示照實際的（命令列 --speak-*-rate 或預設）
+            _webui_send({"type": "interp_rate", "lane": _l, "rate": float(_L.get("rate") or 1.0)})
         threading.Thread(target=_interp_watch_cmds, args=(interp, stop_event), daemon=True).start()
         threading.Thread(target=interp.warm, daemon=True).start()      # 先叫醒 GPU 的合成程式
         if getattr(interp, "passthrough", None) is not None:
@@ -9971,8 +10064,17 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
         print(f"{C_DIM}語音口譯：{'、'.join(_names[k] for k in interp.lanes)}｜{_how}｜"
               f"念過的句子 20 秒內被錄回來會自動略過；請戴耳機{RESET}")
         if _I.THEM in interp.lanes:
-            print(f"{C_DIM}  會議軟體的麥克風請改選虛擬麥克風；結束後記得改回來"
-                  f"{'（同時送出你的原聲，念英文時調小）' if getattr(interp, 'passthrough', None) else ''}{RESET}")
+            _pt_note = "（同時送出你的原聲，念英文時調小）" if getattr(interp, "passthrough", None) else ""
+            # 系統預設麥克風自動切換時（v2.31.0）不可以再叫人自己改、結束記得改回（2026-10-12 pc-002 示範時看到兩句互相矛盾）：
+            # macOS／Linux 切的時候 _defmic_switch 已經印了「切到…，結束後自動切回」；Windows 由口譯麥克風的小程式切
+            if IS_WINDOWS and _DEFMIC["on"] and _interp_vmic:
+                print(f"{C_DIM}  系統預設麥克風會自動切到口譯麥克風、結束自動切回：會議軟體的麥克風設成「預設」就好"
+                      f"（不要的話加 --no-switch-default-mic）{_pt_note}{RESET}")
+            elif _DEFMIC.get("active"):
+                if _pt_note:
+                    print(f"{C_DIM}  {_pt_note.strip('（）')}{RESET}")
+            else:
+                print(f"{C_DIM}  會議軟體的麥克風請改選虛擬麥克風；結束後記得改回來{_pt_note}{RESET}")
     _interp_intro_done = [interp is None or not getattr(interp, "intro", None)]
     _pt = getattr(interp, "passthrough", None) if interp is not None else None
     setup_terminal_raw_input()
@@ -10545,25 +10647,7 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
     lb_recent = deque(maxlen=10)
     mic_recent = deque(maxlen=10)
 
-    def is_duplicate(text, recent):
-        from difflib import SequenceMatcher
-        text_lower = text.lower().strip()
-        if not text_lower:
-            return True
-        for prev in recent:
-            if text_lower == prev:
-                return True
-            # 子字串比對：重疊度 > 70% 時算重複
-            shorter = min(len(text_lower), len(prev))
-            longer = max(len(text_lower), len(prev))
-            if shorter > 0 and (text_lower in prev or prev in text_lower):
-                if shorter / longer > 0.7:
-                    return True
-            # 字元相似度比對：滑動視窗重疊導致文字略有不同但內容重複
-            # shorter >= 8 避免短句誤判（如「中文測試」vs「英文測試」ratio=0.75）
-            if shorter >= 8 and SequenceMatcher(None, text_lower, prev).ratio() > 0.6:
-                return True
-        return False
+    is_duplicate = _bidi_is_duplicate
 
     # ── 排乾辨識結果 ──
     # 語言→幻覺檢查對照（語言預偵測模式用）
@@ -12133,6 +12217,7 @@ def _tts_open_stream(dev, sr):
 # 對方說的英文（系統音訊）翻成中文 → 念給我聽（耳機）；我說的中文（麥克風）翻成英文 → 念進虛擬麥克風給對方聽。
 # 排程與回授過濾在 jtlw_tts/interp.py；這裡是裝置、合成與接到雙向模式
 _INTERP_MODES = ("en_zh",)
+_INTERP_RATE_DEFAULT = 1.2   # 口譯念出來的語速（2026-10-12 使用者：「雙向口譯時預設的語速改 1.2」；串流合成照樣用，stream_tempo）
 # 念給對方聽要把英文送進會議軟體的麥克風：要有虛擬麥克風（2026-10-10 使用者決定）。
 # macOS 安裝 BlackHole 2ch（GPL-3.0，免費）；Linux 程式自動建立；
 # Windows（v2.29.0）：安裝 usbip-win2（開放原始碼 BSD-2-Clause，核心驅動由微軟簽署），程式自己當一支 USB 麥克風（jtlw_tts/vmic.py）。
@@ -12502,10 +12587,11 @@ def _interp_build(args, mode, pause_ev=None):
 
     def synth(item, rate):
         L = lanes[item.lane]
-        if stream and abs(rate - 1.0) < 1e-3:
-            need = pace.prebuffer(I.est_seconds(item.text, L["lang"]))
-            return I.buffered(prov.synth_stream(item.text, L["voice"], L["lang"],
-                                                custom=s["custom"] if L["lang"] == "zh" else None), need, pace)
+        if stream:                     # 語速不是 1 也串流：一段一段調速（以前要等整句合成完，口譯每句晚好幾秒）
+            need = pace.prebuffer(I.est_seconds(item.text, L["lang"]) / rate)
+            return I.buffered(T.stream_tempo(prov.synth_stream(item.text, L["voice"], L["lang"],
+                                                               custom=s["custom"] if L["lang"] == "zh" else None), rate),
+                              need, pace)
         t0 = time.monotonic()
         wav, _ = prov.synth(item.text, L["voice"], s["custom"] if L["lang"] == "zh" else {}, lang=L["lang"])
         raw, sr0 = T.wav_pcm(wav)
@@ -12585,7 +12671,11 @@ def _ask_interp(args, mode):
         return
     print(f"\n{C_TITLE}{BOLD}▎ 語音口譯{RESET}")
     print(f"  {C_DIM}把譯文念出來：對方的英文翻成中文念給你聽、你的中文翻成英文念給對方聽（合成在 GPU 伺服器）。{RESET}")
-    print(f"  {C_DIM}請戴耳機；念給對方聽時，會議軟體的麥克風要改選虛擬裝置，結束後改回來。{RESET}")
+    if _DEFMIC["on"]:
+        print(f"  {C_DIM}請戴耳機；念給對方聽時，口譯期間系統預設麥克風自動切到虛擬麥克風、結束切回，"
+              f"會議軟體的麥克風設成「與系統相同／預設」即可（任何視訊會議軟體都能用）。{RESET}")
+    else:
+        print(f"  {C_DIM}請戴耳機；念給對方聽時，會議軟體的麥克風要改選虛擬裝置，結束後改回來。{RESET}")
     if IS_MACOS:
         print(f"  {C_HIGHLIGHT}念給對方聽{_INTERP_MAC_NEED}{RESET}")
     elif IS_WINDOWS:
@@ -12854,7 +12944,7 @@ _INTERP_KEEP_FILE = os.path.join(SCRIPT_DIR, ".webui_interp_keep")  # webui.py �
 
 
 def _interp_watch_cmds(interp, stop_event):
-    """WebUI 的口譯控制：指令檔一行一個（cancel <編號>、mute me|them 1|0）。先改名再讀，WebUI 同時寫入也不會掉"""
+    """WebUI 的口譯控制：指令檔一行一個（cancel <編號>、mute me|them 1|0、rate me|them <倍數>）。先改名再讀，WebUI 同時寫入也不會掉"""
     work = _INTERP_CMD_FILE + ".work"
     for f in (_INTERP_CMD_FILE, work):
         try:
@@ -12877,6 +12967,10 @@ def _interp_watch_cmds(interp, stop_event):
                     interp.cancel(int(p[1]))
                 elif p[0] == "mute":
                     interp.mute(p[1], p[2] == "1")
+                elif p[0] == "rate":
+                    r = interp.set_rate(p[1], float(p[2]))
+                    if r is not None:
+                        _webui_send({"type": "interp_rate", "lane": p[1], "rate": r})
             except (IndexError, ValueError):
                 pass
 
@@ -14373,6 +14467,7 @@ def _is_en_hallucination(text):
         "subscribe", "like and subscribe",
         "don't forget to subscribe", "please subscribe",
         "please subscribe to my channel",
+        "we'll be right back", "we will be right back",   # 2026-10-12 兩台電腦開會示範：講完之後安靜時跑出來、被念成「我們馬上回來」
     ):
         return True
     # 關鍵字比對（Amara / 字幕歸屬 / 版權幻覺）
@@ -18556,8 +18651,10 @@ def parse_args():
                          "Windows 先安裝 usbip-win2（.\\install.ps1 -InterpMic），再用 auto 自動建立「jt-live-whisper Interpreter Mic」")
     ip.add_argument("--speak-me-voice", metavar="ID", default=None, help="念給我聽的聲音（預設：朗讀的預設聲音）")
     ip.add_argument("--speak-them-voice", metavar="ID", default=None, help="念給對方聽的聲音（預設：內建英文聲音；--tts-list 列出）")
-    ip.add_argument("--speak-me-rate", type=float, default=1.0, metavar="R", help="念給我聽的語速（0.5～2，預設 1；不是 1 時不用串流合成）")
-    ip.add_argument("--speak-them-rate", type=float, default=1.0, metavar="R", help="念給對方聽的語速（0.5～2，預設 1；不是 1 時不用串流合成）")
+    ip.add_argument("--speak-me-rate", type=float, default=_INTERP_RATE_DEFAULT, metavar="R",
+                    help=f"念給我聽的語速（0.5～2，預設 {_INTERP_RATE_DEFAULT:g}）")
+    ip.add_argument("--speak-them-rate", type=float, default=_INTERP_RATE_DEFAULT, metavar="R",
+                    help=f"念給對方聽的語速（0.5～2，預設 {_INTERP_RATE_DEFAULT:g}）")
     ip.add_argument("--interp-intro", default=None, metavar="TEXT",
                     help="第一次念給對方聽之前先念的開場說明（預設："
                          "\"Hi, I'm using an AI interpreter, so there will be a short delay.\"；none＝不念）")
@@ -18779,7 +18876,7 @@ def _build_cli_command(**kwargs):
             parts.append(f"--{flag.replace('_', '-')} {shlex.quote(str(v))}")
     for flag in ("speak_me_rate", "speak_them_rate"):
         v = kwargs.get(flag)
-        if v and abs(float(v) - 1.0) > 1e-6:
+        if v and abs(float(v) - _INTERP_RATE_DEFAULT) > 1e-6:
             parts.append(f"--{flag.replace('_', '-')} {float(v):g}")
     if kwargs.get("passthrough"):
         parts.append("--passthrough")
@@ -19828,7 +19925,7 @@ def main():
                 sys.exit(0)
             print()
             # 麥克風遠端辨識：有 GPU 伺服器時麥克風也送遠端
-            _mic_remote = REMOTE_WHISPER_CONFIG if REMOTE_WHISPER_CONFIG else None
+            _mic_remote = REMOTE_WHISPER_CONFIG if (REMOTE_WHISPER_CONFIG and not args.local_asr) else None   # --local-asr（WebUI 選本機）要真的生效
             run_stream_bidirectional(_bidi_lb_id, _bidi_mic_id,
                                      translator_lb, translator_mic,
                                      model_name, mode,
@@ -20273,7 +20370,7 @@ def main():
                 _interp_linux_cleanup()
                 sys.exit(0)
             print()
-            _mic_remote = REMOTE_WHISPER_CONFIG if REMOTE_WHISPER_CONFIG else None
+            _mic_remote = REMOTE_WHISPER_CONFIG if (REMOTE_WHISPER_CONFIG and not args.local_asr) else None   # --local-asr（WebUI 選本機）要真的生效
             run_stream_bidirectional(_bidi_lb_id, _bidi_mic_id,
                                      translator_lb, translator_mic,
                                      model_name, mode,

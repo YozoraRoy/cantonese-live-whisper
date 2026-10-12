@@ -150,8 +150,10 @@ try:
     _INTERP_WIN_READY as _TM_INTERP_WIN_READY,
     _interp_win_ready as _tm_interp_win_ready,
     _INTERP_VIRTUAL as _TM_INTERP_VIRTUAL,
+    _INTERP_RATE_DEFAULT as _TM_INTERP_RATE_DEFAULT,
 )
 except Exception:
+    _TM_INTERP_RATE_DEFAULT = 1.2
     _tm_tts_output_devices = None
     _TM_INTERP_MAC_NEED = "需要先安裝 BlackHole 2ch"
     _TM_INTERP_WIN_NEED = "需要先安裝 usbip-win2"
@@ -1105,10 +1107,10 @@ def _get_config():
         "default_engine": "llm" if llm_host else "nllb",
         "sck": sck, "is_macos": sys.platform == "darwin",
         "is_linux": sys.platform.startswith("linux"),
-        "last": last, "version": "2.31.2",
+        "last": last, "version": "2.31.3",
         # 網頁需要的後端功能等級：只換了檔案、WebUI 沒重開時，新網頁會連到舊後端（2026-10-09 Mac 實際發生：
         # 「無法取得文字轉語音狀態」）。網頁發現等級不夠就請使用者重新啟動 WebUI，不會亂報錯
-        "api_level": 2,
+        "api_level": 2, "interp_rate_default": _TM_INTERP_RATE_DEFAULT,
         "tts": _tts_info(admin=False),
         "has_read_pw": bool(_webui_passwords["read"]),
         "has_admin_pw": bool(_webui_passwords["admin"]),
@@ -2140,7 +2142,8 @@ INTERP_KEEP = BASE_DIR / ".webui_interp_keep"  # translate_meeting.py 的 _INTER
 
 @app.post("/api/interp")
 def api_interp(request: Request, body: dict = {}):
-    """管理者：雙向語音口譯的控制（v2.28.0）。{action: cancel, id}＝取消還沒念的那句；{action: mute, lane: me|them, on}＝靜音某個方向。
+    """管理者：雙向語音口譯的控制（v2.28.0）。{action: cancel, id}＝取消還沒念的那句；{action: mute, lane: me|them, on}＝靜音某個方向；
+    {action: rate, lane, rate}＝改語速（v2.31.3，0.5～2，下一句生效）。
     寫進指令檔，主程式每 0.2 秒讀一次（跟暫停旗標同一種做法：Windows 沒有可用的信號）"""
     err = _check_auth(request, "admin")
     if err:
@@ -2153,8 +2156,16 @@ def api_interp(request: Request, body: dict = {}):
             return JSONResponse({"ok": False, "error": "id 要是數字"}, status_code=400)
     elif act == "mute" and body.get("lane") in ("me", "them"):
         line = f"mute {body['lane']} {1 if body.get('on') else 0}"
+    elif act == "rate" and body.get("lane") in ("me", "them"):
+        try:
+            r = float(body.get("rate"))
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "rate 要是數字"}, status_code=400)
+        if not 0.5 <= r <= 2.0:
+            return JSONResponse({"ok": False, "error": "語速要在 0.5～2 倍之間"}, status_code=400)
+        line = f"rate {body['lane']} {r:.2f}"
     else:
-        return JSONResponse({"ok": False, "error": "action 只有 cancel、mute"}, status_code=400)
+        return JSONResponse({"ok": False, "error": "action 只有 cancel、mute、rate"}, status_code=400)
     p = _proc                                   # 不拿 _proc_lock：停止時它可能被拿著好幾分鐘（等存檔）
     if p is None or p.poll() is not None:
         return JSONResponse({"ok": False, "error": "沒有在執行"}, status_code=409)

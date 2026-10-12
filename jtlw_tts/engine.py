@@ -650,6 +650,78 @@ def to_pcm(data, rate=1.0, out_sr=None):
     return r.stdout, osr
 
 
+def stream_tempo(chunks, rate):
+    """串流合成的 (pcm, sr) 一段一段改語速（ffmpeg atempo，音調不變），合成一段就交一段。
+
+    口譯預設 1.2 倍（2026-10-12 使用者）：以前語速不是 1 就不用串流、等整句合成完才調速再念，每句晚好幾秒。
+    一個 ffmpeg 行程從頭接到尾（逐段各開一個會在段落接縫產生雜音）；來源的錯誤（GPU 伺服器斷線＝OSError）原樣丟出，
+    呼叫端照舊判斷斷線；中途不要了（取消、靜音）就關掉 ffmpeg 與來源"""
+    rate = float(rate or 1.0)
+    if abs(rate - 1.0) < 1e-3:
+        yield from chunks
+        return
+    if not RATE_MIN <= rate <= RATE_MAX:
+        raise TTSError("invalid_rate", f"語速要在 {RATE_MIN}～{RATE_MAX} 倍之間")
+    ff = _ffmpeg()
+    if not ff:
+        raise TTSError("ffmpeg_missing", "找不到 ffmpeg，無法調整語速", 500)
+    it = iter(chunks)
+    first = next(it, None)
+    if first is None:
+        return
+    pcm0, sr = first
+    # nobuffer／low_delay／probesize：不加的話 ffmpeg 先讀約 1.2 秒才開始輸出（實測第一段晚 1.2 秒），加了收到就出
+    p = subprocess.Popen([ff, "-nostdin", "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", "-flags", "low_delay",
+                          "-probesize", "32", "-analyzeduration", "0", "-f", "s16le", "-ar", str(sr), "-ac", "1",
+                          "-i", "pipe:0", "-filter:a", f"atempo={rate:.3f}", "-f", "s16le", "-ar", str(sr), "-ac", "1",
+                          "-flush_packets", "1", "pipe:1"],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+    err = []
+
+    def feed():
+        try:
+            p.stdin.write(pcm0)
+            for pcm, _sr in it:
+                p.stdin.write(pcm)
+        except BaseException as e:                          # 來源出錯，或這邊不要了（ffmpeg 已關，寫入 BrokenPipe）
+            err.append(e)
+        finally:
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+
+    th = threading.Thread(target=feed, daemon=True)
+    th.start()
+    done = False
+    try:
+        blk = max(2, int(sr * 0.1)) * 2                     # 約 0.1 秒一塊
+        while True:
+            b = p.stdout.read(blk)
+            if not b:
+                break
+            if len(b) % 2:
+                b += p.stdout.read(1) or b"\0"
+            yield b, sr
+        th.join(30)
+        if err and not isinstance(err[0], BrokenPipeError):
+            raise err[0]
+        if p.wait(timeout=10) != 0:
+            raise TTSError("ffmpeg_failed", "調整語速失敗：" + p.stderr.read().decode(errors="replace").strip()[-200:], 500)
+        done = True
+    finally:
+        if p.poll() is None:
+            p.kill()
+        if not done:
+            th.join(2)
+            close = getattr(it, "close", None)
+            if close and not th.is_alive():
+                try:
+                    close()
+                except Exception:
+                    pass
+
+
 # ── 一次朗讀的合成流程 ─────────────────────────────────────────
 class Session:
     """依序合成每一段。ahead=None：全部依序合成（轉成音檔）；否則只合成到「目前位置＋ahead」段
