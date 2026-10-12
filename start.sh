@@ -2,6 +2,10 @@
 # 即時英翻中字幕系統 - 啟動腳本
 # Author: Jason Cheng (Jason Tools)
 
+# 整支包在 { … exit; } 裡（v2.31.2）：bash 是邊讀邊執行，升級會用 cp 原地覆寫這個檔案（WebUI 開著時、或下面的「升級沒有完成就補齊」）。
+# 沒包的話，WebUI 結束後 bash 從舊的位移量接著讀新檔案，從錯位的地方往下跑（2026-10-12 Mac：關掉 WebUI 後它自己又開起來）。
+# 包起來 bash 會先讀完整組才執行，之後檔案怎麼換都不影響這一次；最後的 exit 讓它不再往下讀。tools/test_script_self_replace.py
+{
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/venv"
 
@@ -29,7 +33,7 @@ _COLS=$(tput cols 2>/dev/null || echo 60)
 [ "$_COLS" -lt 40 ] && _COLS=40
 _LINE=$(printf '%*s' "$_COLS" '' | tr ' ' '=')
 echo -e "${C_TITLE}${_LINE}${NC}"
-echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.1 - 100% 全地端 AI 語音工具箱${NC}"
+echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.2 - 100% 全地端 AI 語音工具箱${NC}"
 echo -e "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
 echo -e "${C_TITLE}${_LINE}${NC}"
 echo ""
@@ -235,3 +239,6 @@ stty sane 2>/dev/null || true
 # 桌面捷徑：把 WebUI 的結束碼交給上面的 trap（其他情況照舊以 0 結束，systemd 服務不受影響）
 # （不能寫成 [ ... ] && exit：條件不成立時那一行回 1，整支腳本就以失敗結束——systemd 服務踩過同一個坑）
 if [ "$FROM_SHORTCUT" = "1" ]; then exit "${_webui_rc:-0}"; fi
+
+exit
+}

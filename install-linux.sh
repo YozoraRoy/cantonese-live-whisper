@@ -786,6 +786,9 @@ _api_restart_hint() {
 }
 
 # ─── 主流程 ──────────────────────────────────────
+# 主流程包在 { … exit; } 裡（v2.31.2）：升級會用 cp 原地覆寫安裝程式自己，bash 是邊讀邊執行，
+# 沒包的話換檔之後會從新檔案的錯位處接著跑（start.sh 在 2026-10-12 的 Mac 上就這樣）。tools/test_script_self_replace.py
+{
 if [ -z "${JTLW_UPGRADE_REPO:-}" ]; then            # 升級時交給新版接手的那一次不再印標題（同一個畫面）
     print_title
     echo -e "  ${C_DIM}Linux 版（$( [ "$LINUX_MODE" = "server" ] && echo 伺服器 || echo 桌面 )）${NC}"
@@ -845,3 +848,6 @@ install_desktop_entry
 install_systemd_service
 print_linux_summary
 offer_desktop_shortcut
+
+exit
+}

@@ -138,7 +138,7 @@
   </aside>
   <article class="doc-body md">
 <h1 id="jt-live-whisper-安裝與使用-sop">jt-live-whisper 安裝與使用 SOP</h1>
-<p>即時英翻中字幕系統 v2.31.1 (by Jason Cheng)</p>
+<p>即時英翻中字幕系統 v2.31.2 (by Jason Cheng)</p>
 <table>
 <thead>
 <tr>
@@ -1275,6 +1275,7 @@ cd C:\jt-live-whisper
 <li><strong>升級執行一次就好</strong>（v2.28.1 起）：新版才加入的檔案由新版的安裝程式接手補齊。以前跑的是「舊版」安裝程式，只會複製舊版清單上的檔案，新版才加入的（例如 v2.27.0 的朗讀模組 <code>jtlw_tts/</code>）要再升級一次才會到</li>
 <li><strong>從 v2.28.0 以前升級上來的</strong>：第一次升級跑的還是舊的安裝程式，新加入的檔案可能還沒到；之後執行 <code>./start.sh</code>（Windows：<code>.\start.ps1</code>，點捷徑也是）時會先自動補齊（畫面顯示「升級沒有完成…自動補齊」），連不到 GitHub 時會說要再執行一次升級</li>
 <li><strong>升級後把 WebUI 關掉再重新啟動</strong>：開著的 WebUI 還在跑升級前的程式（例如朗讀的選單是空的、或顯示「文字轉語音元件還沒安裝完成」）</li>
+<li><strong>從 v2.31.1 以前升上來的那一次</strong>（macOS／Linux）：關掉 WebUI 時它可能會自己又開起來（舊的 <code>start.sh</code> 被升級換掉後讀錯位置），再按一次 Ctrl+C 或直接關掉終端機視窗即可；v2.31.2 起不會再發生</li>
 </ul>
 <p>升級結束時，還沒建過捷徑的電腦會問一次要不要建立桌面與應用程式選單捷徑（見 3-4）。</p>
 <p>Linux 的 <code>--upgrade</code> 下載完新檔案後會自動重新執行安裝檢查，補齊新版本需要的相依套件；伺服器版若程式版本有變更，會一併重新啟動 <code>jt-live-whisper-webui</code> 服務。不想在升級時檢查相依套件，可設定 <code>JTLW_SKIP_DEP_CHECK=1</code>。</p>

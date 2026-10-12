@@ -217,7 +217,7 @@ spinner_stop() {
 print_title() {
     echo ""
     echo -e "${C_TITLE}============================================================${NC}"
-    echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.1 - 100% 全地端 AI 語音工具箱 - 安裝程式${NC}"
+    echo -e "${C_TITLE}${BOLD}  jt-live-whisper v2.31.2 - 100% 全地端 AI 語音工具箱 - 安裝程式${NC}"
     echo -e "${C_TITLE}  by Jason Cheng (Jason Tools)${NC}"
     echo -e "${C_TITLE}============================================================${NC}"
     echo ""
@@ -3738,6 +3738,9 @@ if [ -n "${JTLW_INSTALL_LIB:-}" ]; then
 fi
 
 # ─── 主流程 ──────────────────────────────────────
+# 主流程包在 { … exit; } 裡（v2.31.2）：升級會用 cp 原地覆寫安裝程式自己，bash 是邊讀邊執行，
+# 沒包的話換檔之後會從新檔案的錯位處接著跑（start.sh 在 2026-10-12 的 Mac 上就這樣）。tools/test_script_self_replace.py
+{
 [ -z "${JTLW_UPGRADE_REPO:-}" ] && print_title      # 升級時交給新版接手的那一次不再印標題（同一個畫面）
 
 # 處理 --upgrade 參數
@@ -3773,3 +3776,6 @@ setup_remote_whisper
 check_tts_local_mac
 print_summary
 offer_desktop_shortcut
+
+exit
+}
