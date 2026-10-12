@@ -5,7 +5,7 @@
 | **目錄** | [系統架構](#一系統架構) · [音訊設定](#二事前準備音訊設定) · [安裝程式](#三安裝程式) · [啟動與使用](#四啟動與使用) · [REST API](#五rest-api給其他系統串接) · [使用流程總結](#六使用流程總結) · [常見問題](#七常見問題) · [檔案說明](#八檔案說明) · [硬體建議](#硬體建議) |
 |---|---|
 
-將英文語音即時轉錄並翻譯成繁體中文字幕顯示於終端機。採用系統音訊層級擷取（macOS 使用內建 ScreenCaptureKit，或 BlackHole 虛擬音訊裝置；Windows 使用 WASAPI Loopback；Linux 使用 PipeWire / PulseAudio 的 monitor 來源），**理論上任何軟體的聲音輸出都能即時處理**：視訊會議（Zoom、Teams、Meet）、YouTube、Podcast、串流影片、教育訓練等，不限定特定應用程式。亦可離線處理音訊檔案。
+將英文語音即時轉錄並翻譯成繁體中文字幕顯示於終端機。採用系統音訊層級擷取（macOS 使用內建 ScreenCaptureKit，或 BlackHole 虛擬音訊裝置；Windows 使用 WASAPI Loopback；Linux 使用 PipeWire / PulseAudio 的 monitor 來源），**理論上任何軟體的聲音輸出都能即時處理**：線上會議（Zoom、Teams、Meet）、YouTube、Podcast、串流影片、教育訓練等，不限定特定應用程式。亦可離線處理音訊檔案。
 
 適用平台：macOS（Apple Silicon / Intel）/ Windows 10+ / Linux（Ubuntu 22.04、Debian 12 以上）
 
@@ -1189,7 +1189,7 @@ WebUI 需要 fastapi、uvicorn、websockets 套件（安裝腳本已自動安裝
 
 **雙向字幕模式說明（`en_zh` / `ja_zh` / `ko_zh`）**
 
-雙向字幕模式同時擷取兩路音訊：系統音訊（對方外語）和麥克風（自己中文），分別翻譯。適用於視訊會議中雙方使用不同語言的場景。
+雙向字幕模式同時擷取兩路音訊：系統音訊（對方外語）和麥克風（自己中文），分別翻譯。適用於線上會議中雙方使用不同語言的場景。
 
 - **`en_zh`（英中雙向）**：對方英文翻中文 + 自己中文翻英文。麥克風支援中英混雜輸入，說英文時自動偵測並直接顯示（不翻譯）
 - **`ja_zh`（日中雙向）**：對方日文翻中文 + 自己中文翻日文。麥克風支援中日英混雜輸入，說日文或英文時自動偵測並直接顯示（不翻譯）
@@ -2178,7 +2178,7 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
 字幕、逐字稿照舊，只是多了語音。合成在 GPU 伺服器（要有文字轉語音，見 4-15；GPU 伺服器要 v2.28.0 以上才有邊合成邊播）。
 
-**任何視訊會議軟體都能用**（Zoom、Microsoft Teams、Google Meet、Jitsi Meet…）：jt-live-whisper 聽的是電腦播出的會議聲音、說的話經麥克風送進會議，不需要會議軟體配合。網站上的示範圖用 Jitsi Meet。
+**任何線上會議軟體都能用**（Zoom、Microsoft Teams、Google Meet、Jitsi Meet…）：jt-live-whisper 聽的是電腦播出的會議聲音、說的話經麥克風送進會議，不需要會議軟體配合。網站上的示範圖用 Jitsi Meet。
 
 #### 事前準備與接線
 
@@ -2803,7 +2803,7 @@ journalctl -u <服務名> | grep source.rejected
 - **Linux：** 程式擷取的是「預設喇叭」，請確認聲音是從預設輸出裝置播放（`pactl get-default-sink`），且該裝置沒有靜音。會議軟體若指定了其他輸出裝置，可用 `JTLW_MONITOR_SOURCE` 指定對應的 monitor 來源。
 
 ### Q: 應用程式沒有提供音訊輸出裝置的選項，怎麼讓它走多重輸出裝置？（macOS）
-到 **系統設定 → 聲音 → 輸出** 選擇「多重輸出裝置」。大多數應用程式（如 YouTube、Podcast、串流影片等）會直接使用系統預設的音訊輸出，只要系統層級切過去就行，不需要在個別應用程式內設定。只有 Zoom、Teams 等視訊會議軟體會有自己的音訊輸出選項，才需要另外在軟體內手動選。
+到 **系統設定 → 聲音 → 輸出** 選擇「多重輸出裝置」。大多數應用程式（如 YouTube、Podcast、串流影片等）會直接使用系統預設的音訊輸出，只要系統層級切過去就行，不需要在個別應用程式內設定。只有 Zoom、Teams 等線上會議軟體會有自己的音訊輸出選項，才需要另外在軟體內手動選。
 
 ### Q: 翻譯品質不好？
 - 確認使用 LLM 翻譯引擎（而非 Argos 離線翻譯）

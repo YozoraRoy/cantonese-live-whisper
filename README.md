@@ -9,7 +9,7 @@
 | **目錄** | [核心功能](#核心功能) · [其他特色](#其他特色) · [系統需求](#系統需求) · [快速開始](#快速開始) · [使用方式](#使用方式) · [互動式選單](#互動式選單功能一覽) · [命令列參數](#命令列參數) · [技術架構](#技術架構) · [硬體建議](#硬體建議) · [升級](#升級) |
 |---|---|
 
-核心功能涵蓋即時語音轉錄、中日韓英即時翻譯字幕、離線音訊檔批次處理、講者辨識（Speaker Diarization）、以及 LLM 會議摘要產出。採用系統音訊層級擷取（macOS 使用內建 ScreenCaptureKit，免安裝驅動；Windows 使用 WASAPI Loopback；Linux 使用 PipeWire / PulseAudio 的 monitor 來源），**理論上任何軟體的聲音輸出都能即時處理**：視訊會議（Zoom、Teams、Meet）、YouTube、Podcast、串流影片等，不限定特定應用程式。所有 AI 推論皆由地端模型完成，全程不經過第三方雲端 API。
+核心功能涵蓋即時語音轉錄、中日韓英即時翻譯字幕、離線音訊檔批次處理、講者辨識（Speaker Diarization）、以及 LLM 會議摘要產出。採用系統音訊層級擷取（macOS 使用內建 ScreenCaptureKit，免安裝驅動；Windows 使用 WASAPI Loopback；Linux 使用 PipeWire / PulseAudio 的 monitor 來源），**理論上任何軟體的聲音輸出都能即時處理**：線上會議（Zoom、Teams、Meet）、YouTube、Podcast、串流影片等，不限定特定應用程式。所有 AI 推論皆由地端模型完成，全程不經過第三方雲端 API。
 
 Author: Jason Cheng (Jason Tools)
 
@@ -58,7 +58,7 @@ Author: Jason Cheng (Jason Tools)
 | 翻譯 (離線備援) | **Argos Translate** | 完全離線的輕量翻譯模型，僅支援英翻中 | 程式 MIT；英翻中模型 CC-BY 4.0（源自 OPUS-MT） |
 | 講者辨識 | **resemblyzer** + **spectralcluster** | 聲紋特徵提取 + Google 頻譜分群演算法，可在本機或 GPU 伺服器執行 | Apache-2.0 |
 | 講者辨識 | **Nemotron 3 Diarization** (NVIDIA) | **v2.26.0 起預設使用**（transformers 5.18 以上，安裝程式自動安裝並下載模型 0.71 GB）；Intel Mac、超過 8 人時沿用上一列的方法 | OpenMDW-1.1 |
-| 語音合成 (TTS) | **VoxCPM2** (OpenBMB) | **v2.27.0 起**：把文字念成台灣華語；內建 8 個 AI 產生的聲音（不是真人錄音），也可以匯入自己的台灣華語錄音。GPU 伺服器或 Apple Silicon Mac（MLX 8bit） | Apache-2.0 |
+| 語音合成 (TTS) | **VoxCPM2** (OpenBMB) | **v2.27.0 起**：把文字念出來：中文以台灣念法為準（夾雜英文也行），雙向語音口譯也用它念英文；模型本身支援中、英、日、韓等 30 種語言，目前朗讀針對台灣華語調校。內建 8 個中文、2 個英文 AI 產生的聲音（不是真人錄音），也可以匯入自己的台灣華語錄音。GPU 伺服器或 Apple Silicon Mac（MLX 8bit） | Apache-2.0 |
 | 語音合成 (TTS，選用) | **BreezyVoice** (MediaTek) | 台灣口音，但合成速度慢，不適合即時；只在 GPU 伺服器，安裝時問要不要加裝（預設否） | Apache-2.0 |
 | 破音字判斷 | **g2pW**＋教育部《重編國語辭典修訂本》 | 朗讀時判斷台灣念法（辭典資料安裝時下載，著作權屬教育部） | g2pW Apache-2.0；辭典 CC BY-ND 3.0 TW |
 
@@ -183,7 +183,7 @@ v2.25.0 起改用 [jt-doc-tools](https://jasoncheng7115.github.io/jt-doc-tools/)
 ![即時日翻中字幕畫面（Windows）](images/realtime-ja2zh.png)
 
 ### 6. 雙向字幕模式
-英中雙向（`en_zh`）、日中雙向（`ja_zh`）和韓中雙向（`ko_zh`），同時擷取系統音訊與麥克風，對方外語翻中文、自己中文翻外語，適用於雙語視訊會議。
+英中雙向（`en_zh`）、日中雙向（`ja_zh`）和韓中雙向（`ko_zh`），同時擷取系統音訊與麥克風，對方外語翻中文、自己中文翻外語，適用於雙語線上會議。
 
 ![英中雙向即時字幕（終端機）](images/bidi-en-zh-cli.png)
 
@@ -216,7 +216,7 @@ WebUI「輸入來源」選「**文字內容朗讀**」：貼上文字或選文�
 ![文字轉語音：台灣華語朗讀](images/tts-settings.png)
 
 ### 8. 雙向語音口譯（英中，v2.28.0）
-英中雙向即時模式多一個「**語音口譯**」：**對方說的英文翻成中文念給你聽**（耳機），**你說的中文翻成英文念給對方聽**（經虛擬麥克風送進會議軟體）。字幕與逐字稿照舊。合成在 GPU 伺服器。**任何視訊會議軟體都能用**（Zoom、Microsoft Teams、Google Meet、Jitsi Meet…）：jt-live-whisper 聽的是電腦播出的會議聲音、說的話經麥克風送進會議，不需要會議軟體配合。
+英中雙向即時模式多一個「**語音口譯**」：**對方說的英文翻成中文念給你聽**（耳機），**你說的中文翻成英文念給對方聽**（經虛擬麥克風送進會議軟體）。字幕與逐字稿照舊。合成在 GPU 伺服器。**任何線上會議軟體都能用**（Zoom、Microsoft Teams、Google Meet、Jitsi Meet…）：jt-live-whisper 聽的是電腦播出的會議聲音、說的話經麥克風送進會議，不需要會議軟體配合。
 
 > **事前準備：念給對方聽要有「虛擬麥克風」**（會議軟體只能從麥克風收聲音）
 > - **macOS：要先安裝 [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole)**（免費，GPL-3.0）：`brew install --cask blackhole-2ch`，需要管理者密碼、裝完重新開機
