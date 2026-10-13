@@ -604,10 +604,13 @@ def _app_version():
     return tm.APP_VERSION
 
 
-def _probe_json(url, timeout=2.0):
-    """GET 一個 JSON 端點；連不上或格式不對回 None（不拋例外）"""
+def _probe_json(url, timeout=2.0, llm=False):
+    """GET 一個 JSON 端點；連不上或格式不對回 None（不拋例外）。llm：LLM 伺服器，要帶 API 金鑰（v2.31.4）"""
     import urllib.request
     try:
+        if llm:
+            import translate_meeting as tm
+            url = tm._llm_request(url)
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception:
@@ -650,11 +653,13 @@ def _workers_info():
     else:
         out.append({"id": "asr-local", "kind": "asr", "endpoint": "local",
                     "health": "ok", "version": "faster-whisper"})
-    if s.llm_host:
-        tags = _probe_json(f"http://{s.llm_host}:{s.llm_port}/api/tags")
+    import translate_meeting as tm
+    llm_h, llm_p = s.llm_endpoint(tm)
+    if llm_h:
+        tags = _probe_json(tm._llm_url(llm_h, llm_p, "/api/tags"), llm=True)
         if tags is None:
-            tags = _probe_json(f"http://{s.llm_host}:{s.llm_port}/v1/models")
-        out.append({"id": "llm", "kind": "llm", "endpoint": f"{s.llm_host}:{s.llm_port}",
+            tags = _probe_json(tm._llm_url(llm_h, llm_p, "/v1/models"), llm=True)
+        out.append({"id": "llm", "kind": "llm", "endpoint": tm._llm_display(llm_h, llm_p),
                     "health": "ok" if tags is not None else "down",
                     "version": s.correction_model})
     return out

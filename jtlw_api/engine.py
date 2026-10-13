@@ -24,6 +24,16 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import translate_meeting as tm   # noqa: E402
 
+
+def _llm_endpoint(settings):
+    """LLM 伺服器的 (host, port)：設定有完整網址 llm_url（https、反向代理的路徑）就照它解析，順便登記，之後組網址才對（v2.31.4）"""
+    url = getattr(settings, "llm_url", "")
+    if url:
+        host, port, err = tm._parse_llm_host(url)
+        if not err:
+            return host, port
+    return settings.llm_host, settings.llm_port
+
 from . import config             # noqa: E402
 from . import log as jlog        # noqa: E402
 from .events import now_iso      # noqa: E402
@@ -747,7 +757,7 @@ class Engine:
         self.store.put_job(job)
 
     def _llm_correct(self, job, raw, level, fixed=None):
-        host, port = self.settings.llm_host, self.settings.llm_port
+        host, port = _llm_endpoint(self.settings)
         if not host:
             raise EngineError("llm_unavailable", "correction", {"reason": "未設定 LLM 伺服器"})
         server_type = tm._detect_llm_server(host, port)
@@ -904,7 +914,7 @@ class Engine:
                    "mindmap": [], "charts": [], "dropped_count": 0, "llm_calls": 0,
                    "speaker_stats": tm._meeting_modules()[0].speaker_stats(segs)}
         else:
-            host, port = self.settings.llm_host, self.settings.llm_port
+            host, port = _llm_endpoint(self.settings)
             if not host:
                 raise EngineError("llm_unavailable", "summary", {"reason": "未設定 LLM 伺服器"})
             server_type = tm._detect_llm_server(host, port)

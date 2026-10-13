@@ -95,6 +95,7 @@
       <a class="lv3" href="#q-辨識速度太慢">Q: 辨識速度太慢？</a>
       <a class="lv3" href="#q-伺服器版或-proxmox-的-lxc-容器vm裡webui-開即時模式顯示啟動失敗">Q: 伺服器版（或 Proxmox 的 LXC 容器、VM）裡，WebUI 開即時模式顯示「啟動失敗」？</a>
       <a class="lv3" href="#q-從別台電腦用-webui按-llm-主機的測試連線一直顯示需要管理密碼">Q: 從別台電腦用 WebUI，按 LLM 主機的「測試連線」一直顯示「需要管理密碼」？</a>
+      <a class="lv3" href="#q-llm-在反向代理nginxlitellm後面測試連線一直無法連線-主機11434">Q: LLM 在反向代理（nginx、LiteLLM）後面，測試連線一直「無法連線 主機:11434」？</a>
       <a class="lv3" href="#q-開始時出現設定檔讀不懂">Q: 開始時出現「設定檔讀不懂」？</a>
       <a class="lv3" href="#q-字幕的譯文出現翻譯失敗">Q: 字幕的譯文出現「（翻譯失敗）」？</a>
       <a class="lv3" href="#q-搬遷資料夾後程式無法執行">Q: 搬遷資料夾後程式無法執行？</a>
@@ -138,7 +139,7 @@
   </aside>
   <article class="doc-body md">
 <h1 id="jt-live-whisper-安裝與使用-sop">jt-live-whisper 安裝與使用 SOP</h1>
-<p>即時英翻中字幕系統 v2.31.3 (by Jason Cheng)</p>
+<p>即時英翻中字幕系統 v2.31.4 (by Jason Cheng)</p>
 <table>
 <thead>
 <tr>
@@ -1556,7 +1557,7 @@ v2.27.0 起安裝程式（含 <code>-Upgrade</code>）在 Windows 預設狀態�
 </tr>
 <tr>
 <td><code>--llm-host HOST</code></td>
-<td>LLM 伺服器位址，自動偵測 Ollama 或 OpenAI 相容 (支援 host:port 格式)</td>
+<td>LLM 伺服器位址，自動偵測 Ollama 或 OpenAI 相容：<code>主機:連接埠</code>，或完整網址（http／https、反向代理的路徑，例如 <code>https://llm.example.com/v1</code>；沒寫連接埠時 http＝80、https＝443）。要 API 金鑰時設環境變數 <code>JTLW_LLM_API_KEY</code> 或 <code>config.json</code> 的 <code>llm_api_key</code></td>
 <td>無（需設定）</td>
 </tr>
 <tr>
@@ -3947,6 +3948,15 @@ v2.26.18 起「啟動失敗」的卡片會直接顯示原因；之前的版本�
 <h3 id="q-從別台電腦用-webui按-llm-主機的測試連線一直顯示需要管理密碼">Q: 從別台電腦用 WebUI，按 LLM 主機的「測試連線」一直顯示「需要管理密碼」？</h3>
 <p>v2.26.15 以前的問題：已經用管理密碼登入，「測試連線」與自動抓模型清單仍然沒有帶上密碼，所以一律被拒絕（設了觀看密碼時，錄音檔清單也會是空的）。升級到 v2.26.16 以上即可。
 LLM 主機填「主機:連接埠」（例如 <code>192.168.1.40:11434</code>），也可以貼 <code>http://主機:連接埠</code> 或 OpenAI 相容的網址（<code>…/v1</code>）；格式不對時（例如連接埠超出 1～65535）會直接說明哪裡不對。</p>
+<h3 id="q-llm-在反向代理nginxlitellm後面測試連線一直無法連線-主機11434">Q: LLM 在反向代理（nginx、LiteLLM）後面，測試連線一直「無法連線 主機:11434」？</h3>
+<p>v2.31.3 以前只認 <code>主機:連接埠</code>：寫了 <code>http://主機/v1</code> 也會被當成 Ollama 的 11434、路徑整段丟掉，而且不能帶 API 金鑰。v2.31.4 起：</p>
+<ul>
+<li>LLM 主機直接填反向代理的完整網址，例如 <code>https://llm.example.com/v1</code>、<code>http://10.0.0.5/litellm/v1</code>。沒寫連接埠時 http 是 80、https 是 443；只寫主機（例如 <code>192.168.1.40</code>）照舊是 Ollama 的 11434</li>
+<li>伺服器要 API 金鑰（LiteLLM 常見）時，WebUI 填「API 金鑰（選填）」，存在這台的 <code>config.json</code>（<code>llm_api_key</code>），畫面之後只顯示「已設定」；命令列用環境變數 <code>JTLW_LLM_API_KEY</code>（不放在命令列參數，<code>ps</code> 看得到）。金鑰只送到 LLM 伺服器</li>
+<li>「測試連線」會分開說明：要求 API 金鑰／金鑰不對（401、403）、https 憑證驗證失敗、連不上</li>
+<li>檢查嚴格的 OpenAI 相容伺服器（預設設定的 LiteLLM）不認得關閉思考的參數時回 400：程式會拿掉再送，之後不再送</li>
+<li><code>config.json</code> 手動設定時寫 <code>&quot;llm_url&quot;: &quot;https://llm.example.com/v1&quot;</code>（有它就以它為準）</li>
+</ul>
 <h3 id="q-開始時出現設定檔讀不懂">Q: 開始時出現「設定檔讀不懂」？</h3>
 <p><code>config.json</code> 有格式錯誤（常見的是手動編輯時多一個逗號或少一個引號）。訊息會寫出第幾行第幾欄。
 這次會先用預設設定執行（GPU 伺服器、LLM 主機等設定這次不會生效），<strong>而且不會覆寫這個檔案</strong>（v2.26.13 起；以前會默默當成空設定，之後存檔時還會把它覆寫成幾乎空白）。

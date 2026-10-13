@@ -128,6 +128,8 @@ class Settings:
         self.remote_whisper = api.get("remote_whisper", cfg.get("remote_whisper"))
         self.llm_host = api.get("llm_host", cfg.get("llm_host", ""))
         self.llm_port = int(api.get("llm_port", cfg.get("llm_port", 11434)))
+        # 完整網址（https、反向代理的路徑，例如 https://llm.example.com/v1；v2.31.4）：有設就以它為準，金鑰用 config.json 的 llm_api_key
+        self.llm_url = str(api.get("llm_url", cfg.get("llm_url", "")) or "").strip()
         # 預設跟著 translate_meeting 的 SUMMARY_DEFAULT_MODEL 走，不要另外寫死一個舊模型。
         # 2026-09-18 用 882 段有標準答案的語料實測：gpt-oss:120b 的校正會讓英文 CER
         # 從 9.67% 惡化到 10.81%，qwen3.8:27b 則降到 9.48%。給 JTDT 的風險數字是用
@@ -157,6 +159,14 @@ class Settings:
         # 測試用：不做真正的語音處理，改產生假逐字稿
         self.fake_engine = os.environ.get("JTLW_API_FAKE_ENGINE", "") == "1"
         self.speed = float(os.environ.get("JTLW_API_SPEED", "1"))
+
+    def llm_endpoint(self, tm):
+        """LLM 伺服器的 (host, port)：有 llm_url 就照它解析（順便登記 https 與路徑，之後組網址才對）"""
+        if self.llm_url:
+            host, port, err = tm._parse_llm_host(self.llm_url)
+            if not err:
+                return host, port
+        return self.llm_host, self.llm_port
 
     def key_info(self, raw_key):
         return self.api_keys.get(hash_key(raw_key))

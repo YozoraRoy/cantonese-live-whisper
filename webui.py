@@ -135,6 +135,8 @@ try:
         _pulse_label as _tm_pulse_label,
         _detect_llm_server as _tm_detect_llm_server,
         _parse_llm_host as _tm_parse_llm_host,
+        _llm_url as _tm_llm_url,
+        _llm_display as _tm_llm_display,
         _BUILTIN_TRANSLATE_MODELS as _TM_TRANSLATE_MODELS,
         DEFAULT_TRANSLATE_MODEL as _TM_DEFAULT_TRANSLATE_MODEL,
     SUMMARY_DEFAULT_MODEL as _TM_SUMMARY_DEFAULT_MODEL,
@@ -161,6 +163,8 @@ except Exception:
     _tm_interp_win_ready = None
     _TM_INTERP_VIRTUAL = re.compile(r"blackhole|virtual", re.I)
     _tm_parse_llm_host = None
+    _tm_llm_url = None
+    _tm_llm_display = None
     _TM_TRANSLATE_MODELS = [("gemma4:26b", "速度快、品質好（推薦，約需 17GB）"),
                             ("qwen2.5:14b", "品質好，較省記憶體（約需 9GB）")]
     _TM_DEFAULT_TRANSLATE_MODEL = "gemma4:26b"
@@ -1037,14 +1041,18 @@ def _get_config():
     llm_models = [{"value": n, "label": f"{n} — {d}"} for n, d in _TM_TRANSLATE_MODELS]
     # 讀 config.json 的預設 LLM 設定 + 使用者自訂模型
     llm_host = ""
+    llm_api_key_set = False
     llm_model = _TM_DEFAULT_TRANSLATE_MODEL
     if CONFIG_FILE.exists():
         try:
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             llm_host = cfg.get("llm_host", "") or cfg.get("ollama_host", "")
-            if llm_host:
+            if cfg.get("llm_url"):
+                llm_host = cfg["llm_url"]
+            elif llm_host:
                 port = cfg.get("llm_port", 11434) or cfg.get("ollama_port", 11434)
                 llm_host = f"{llm_host}:{port}"
+            llm_api_key_set = bool(str(cfg.get("llm_api_key") or "").strip())
             llm_model = cfg.get("last_llm_model", "") or cfg.get("ollama_model", llm_model)
             # 使用者自訂翻譯模型
             for um in cfg.get("translate_models", []):
@@ -1101,13 +1109,14 @@ def _get_config():
         "default_llm_model": _TM_DEFAULT_TRANSLATE_MODEL,
         "default_summary_model": _TM_SUMMARY_DEFAULT_MODEL,
         "llm_host_auto": llm_host_auto,
+        "llm_api_key_set": llm_api_key_set,     # 金鑰本身不回給前端（v2.31.4）
         "devices": devices, "auto_loopback": auto_loopback, "auto_mic": auto_mic,
         "gpu_host": gpu_host, "summary_descs": summary_descs,
         "recommended_models": recommended_models,
         "default_engine": "llm" if llm_host else "nllb",
         "sck": sck, "is_macos": sys.platform == "darwin",
         "is_linux": sys.platform.startswith("linux"),
-        "last": last, "version": "2.31.3",
+        "last": last, "version": "2.31.4",
         # 網頁需要的後端功能等級：只換了檔案、WebUI 沒重開時，新網頁會連到舊後端（2026-10-09 Mac 實際發生：
         # 「無法取得文字轉語音狀態」）。網頁發現等級不夠就請使用者重新啟動 WebUI，不會亂報錯
         "api_level": 2, "interp_rate_default": _TM_INTERP_RATE_DEFAULT,
@@ -1581,22 +1590,32 @@ async def api_test_llm(request: Request, body: dict = {}):
     host = body.get("host", "").strip()
     if not host:
         return JSONResponse({"ok": False, "error": "未填入主機位址"})
-    if _tm_parse_llm_host:
-        # 格式不對時講清楚哪裡不對（以前 http:// 開頭或連接埠超出範圍都只回籠統的「無法連線」）
-        _h, _p, _perr = _tm_parse_llm_host(host)
-        if _perr:
-            return JSONResponse({"ok": False, "error": _perr})
-        host = f"{_h}:{_p}"
+    if not (_tm_parse_llm_host and _tm_llm_url):
+        return JSONResponse({"ok": False, "error": "主程式載入失敗，無法測試"})
+    # 格式不對時講清楚哪裡不對；https、反向代理的路徑（…/v1）、沒寫連接埠（80／443）都照 _parse_llm_host（v2.31.4）
+    _h, _p, _perr = _tm_parse_llm_host(host)
+    if _perr:
+        return JSONResponse({"ok": False, "error": _perr})
+    # 金鑰：畫面上剛填的優先，沒填就用設定檔存的（LiteLLM 等）；只送到這台 LLM 伺服器
+    key = str(body.get("api_key") or "").strip()
+    if not key:
+        try:
+            key = str(json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("llm_api_key") or "").strip()
+        except Exception:
+            key = ""
     import urllib.request
     import urllib.error
     # 嘗試 Ollama /api/tags 和 OpenAI /v1/models
     # 注意：必須驗證回傳結構，不能只看 HTTP 200。LM Studio 對未實作的
     # endpoint 一律回 200，若只看狀態碼會把 LM Studio 誤判成 Ollama。
+    auth_fail, tls_fail = None, None
     for path in ["/api/tags", "/v1/models"]:
-        url = f"http://{host}{path}"
+        url = _tm_llm_url(_h, _p, path)
         try:
             req = urllib.request.Request(url, method="GET")
             req.add_header("Accept", "application/json")
+            if key:
+                req.add_header("Authorization", f"Bearer {key}")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
                 if not isinstance(data, dict):
@@ -1615,9 +1634,21 @@ async def api_test_llm(request: Request, body: dict = {}):
                     server_type = "openai"
                 return JSONResponse({"ok": True, "server_type": server_type,
                                      "models": models[:20], "url": url})
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                auth_fail = e.code
+        except urllib.error.URLError as e:
+            if "CERTIFICATE" in str(e.reason).upper() or "SSL" in str(e.reason).upper():
+                tls_fail = str(e.reason)
         except Exception:
             continue
-    return JSONResponse({"ok": False, "error": f"無法連線 {host}（已嘗試 Ollama 和 OpenAI 相容 API）"})
+    where = _tm_llm_url(_h, _p, "") if _tm_llm_display else host
+    if auth_fail:
+        msg = ("API 金鑰不正確或沒有權限" if key else "這台伺服器要求 API 金鑰，請填入「API 金鑰」") + f"（HTTP {auth_fail}，{where}）"
+        return JSONResponse({"ok": False, "error": msg})
+    if tls_fail:
+        return JSONResponse({"ok": False, "error": f"https 憑證驗證失敗（{where}）：{tls_fail}"})
+    return JSONResponse({"ok": False, "error": f"無法連線 {where}（已嘗試 Ollama 和 OpenAI 相容 API）"})
 
 
 def _build_args(body: dict) -> list:
@@ -1712,7 +1743,16 @@ async def api_start(request: Request, body: dict = {}):
         _h, _p, _perr = _tm_parse_llm_host(body["llm_host"])
         if _perr:
             return JSONResponse({"status": "error", "error": f"LLM 主機：{_perr}"}, status_code=400)
-        body["llm_host"] = f"{_h}:{_p}"
+        body["llm_host"] = _tm_llm_display(_h, _p) if _tm_llm_display else f"{_h}:{_p}"
+    _key = str(body.pop("llm_api_key", "") or "").strip()
+    if _key:
+        try:
+            _c = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
+            if _c.get("llm_api_key") != _key:
+                _c["llm_api_key"] = _key
+                _write_config(_c)
+        except Exception as e:
+            return JSONResponse({"status": "error", "error": f"API 金鑰存不進設定檔：{e}"}, status_code=500)
     if body.get("source") in ("tts", "tts_file"):
         if _tts is None:
             return JSONResponse({"status": "error", "error": _TTS_MISSING}, status_code=503)

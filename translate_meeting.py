@@ -2729,7 +2729,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.31.3"
+APP_VERSION = "2.31.4"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -5390,7 +5390,7 @@ def _detect_llm_server(host, port):
     """
     # 先嘗試 Ollama：回傳須為 {"models": [...]} 結構
     try:
-        req = urllib.request.Request(f"http://{host}:{port}/api/tags")
+        req = _llm_request(_llm_url(host, port, "/api/tags"))
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read())
             if isinstance(data, dict) and isinstance(data.get("models"), list):
@@ -5399,7 +5399,7 @@ def _detect_llm_server(host, port):
         pass
     # 再嘗試 OpenAI 相容：回傳須為 {"data": [...]} 結構（LM Studio 走這條）
     try:
-        req = urllib.request.Request(f"http://{host}:{port}/v1/models")
+        req = _llm_request(_llm_url(host, port, "/v1/models"))
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read())
             if isinstance(data, dict) and isinstance(data.get("data"), list):
@@ -5430,12 +5430,12 @@ def _llm_list_models(host, port, server_type):
     """列出 LLM 伺服器上的模型，回傳 list[str]"""
     try:
         if server_type == "ollama":
-            req = urllib.request.Request(f"http://{host}:{port}/api/tags")
+            req = _llm_request(_llm_url(host, port, "/api/tags"))
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())
                 return [m["name"] for m in data.get("models", [])]
         elif server_type == "openai":
-            req = urllib.request.Request(f"http://{host}:{port}/v1/models")
+            req = _llm_request(_llm_url(host, port, "/v1/models"))
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())
                 return [m["id"] for m in data.get("data", [])
@@ -5498,7 +5498,7 @@ def _llm_generate(prompt, model, host, port, server_type, stream=False,
     write_lock = getattr(spinner, '_lock', None)
 
     if server_type == "openai":
-        url = f"http://{host}:{port}/v1/chat/completions"
+        url = _llm_url(host, port, "/v1/chat/completions")
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -5506,12 +5506,12 @@ def _llm_generate(prompt, model, host, port, server_type, stream=False,
         }
         # OpenAI 相容：部分伺服器支援 chat_template_kwargs 關閉思考（Qwen3 等）；
         # Ollama 的 /v1 端點不吃這個，gemma4 要用 reasoning_effort="none" 才關得掉
-        if think is False:
+        if think is False and (model, host, port) not in _NO_THINK_MODELS:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
             payload["reasoning_effort"] = "none"
     else:
         # 預設 Ollama
-        url = f"http://{host}:{port}/api/generate"
+        url = _llm_url(host, port, "/api/generate")
         payload = {
             "model": model,
             "prompt": prompt,
@@ -5523,10 +5523,7 @@ def _llm_generate(prompt, model, host, port, server_type, stream=False,
 
     def _send():
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=data,
-            headers={"Content-Type": "application/json"},
-        )
+        req = _llm_request(url, data=data, headers={"Content-Type": "application/json"})
         return urllib.request.urlopen(req, timeout=timeout)
 
     def _open():
@@ -5537,9 +5534,14 @@ def _llm_generate(prompt, model, host, port, server_type, stream=False,
             # 不認得 reasoning_effort="none" 的 OpenAI 相容伺服器同樣回 400，移除後重送
             if e.code != 400:
                 raise
-            if payload.pop("reasoning_effort", None) is None:
-                if payload.pop("think", None) is None:
-                    raise
+            # 檢查嚴格的 OpenAI 相容伺服器（預設設定的 LiteLLM、OpenAI 官方）對不認得的 chat_template_kwargs 也回 400
+            # （JTDT 實測；v2.31.3 以前只拿掉 reasoning_effort，LiteLLM 每一句翻譯都失敗）：兩個都拿掉重送，之後這個模型不再送
+            dropped = [k for k in ("reasoning_effort", "chat_template_kwargs") if payload.pop(k, None) is not None]
+            if dropped:
+                _NO_THINK_MODELS.add((model, host, port))
+            elif payload.pop("think", None) is None:
+                raise
+            else:
                 # 這個模型不支援思考模式，記下來，之後不再送 think
                 _NO_THINK_MODELS.add((model, host, port))
         return _send()
@@ -6680,8 +6682,7 @@ def select_translator(init_host=None, init_port=None, mode="en2zh"):
 
     # 記住成功連線的位址
     if host != OLLAMA_HOST or port != OLLAMA_PORT:
-        _config["llm_host"] = host
-        _config["llm_port"] = port
+        _llm_save_config(_config, host, port)
         _config.pop("ollama_host", None)
         _config.pop("ollama_port", None)
         save_config(_config)
@@ -7069,7 +7070,7 @@ def _input_interactive_menu(args):
             else:
                 print(f"  {C_DIM}尚未設定 LLM 伺服器{RESET}")
                 print(f"{C_DIM}{'─' * 60}{RESET}")
-                print(f"{C_WHITE}輸入 LLM 伺服器位址（host:port），或按 Enter 使用離線翻譯：{RESET}", end=" ")
+                print(f"{C_WHITE}輸入 LLM 伺服器位址（主機:連接埠，或 https://主機/v1），或按 Enter 使用離線翻譯：{RESET}", end=" ")
 
             _h, _p = _ask_llm_host()
             if _h:
@@ -7373,8 +7374,7 @@ def _input_interactive_menu(args):
 
         # 記住 LLM 伺服器位址（只在連線成功時才存）
         if llm_server_type and (ollama_host != OLLAMA_HOST or ollama_port != OLLAMA_PORT):
-            _config["llm_host"] = ollama_host
-            _config["llm_port"] = ollama_port
+            _llm_save_config(_config, ollama_host, ollama_port)
             _config.pop("ollama_host", None)
             _config.pop("ollama_port", None)
             save_config(_config)
@@ -14336,12 +14336,9 @@ def query_ollama_num_ctx(model, host, port, server_type="ollama"):
     if server_type == "openai":
         return _query_openai_context_length(model, host, port)
     try:
-        url = f"http://{host}:{port}/api/show"
+        url = _llm_url(host, port, "/api/show")
         payload = json.dumps({"name": model}).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=payload,
-            headers={"Content-Type": "application/json"},
-        )
+        req = _llm_request(url, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
         # 優先從 model_info 裡找 context_length
@@ -14369,8 +14366,8 @@ def _query_openai_context_length(model, host, port):
     _CTX_KEYS = ("max_model_len", "context_length", "max_context_length",
                  "context_window", "n_ctx")
     try:
-        url = f"http://{host}:{port}/v1/models"
-        req = urllib.request.Request(url)
+        url = _llm_url(host, port, "/v1/models")
+        req = _llm_request(url)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
         for m in data.get("data", []):
@@ -15719,7 +15716,7 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
         if correct_with_llm and llm_model:
             _meta["correct_engine"] = llm_model
             _srv_label_c = "Ollama" if llm_server_type == "ollama" else "OpenAI 相容" if llm_server_type == "openai" else ""
-            _loc_c = f"{llm_host}:{llm_port}"
+            _loc_c = _llm_display(llm_host, llm_port)
             if _srv_label_c:
                 _loc_c += f" ({_srv_label_c})"
             _meta["correct_location"] = _loc_c
@@ -16929,7 +16926,7 @@ def _meeting_language_ok(segments):
 
 def _meeting_ask(model, host, port, server_type="ollama", timeout=_MEETING_TIMEOUT, cancelled=None):
     """回傳 ask(prompt) → 模型回覆文字（會議分析每一次呼叫模型都經過這裡）"""
-    url = f"http://{host}:{port}/v1/chat/completions"
+    url = _llm_url(host, port, "/v1/chat/completions")
     ollama = server_type != "openai"
     state = {"reasoning_effort": ollama}
 
@@ -16945,8 +16942,8 @@ def _meeting_ask(model, host, port, server_type="ollama", timeout=_MEETING_TIMEO
                 payload["reasoning_effort"] = "none"
 
         def send():
-            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Content-Type": "application/json"})
+            req = _llm_request(url, data=json.dumps(payload).encode("utf-8"),
+                               headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read())
         try:
@@ -18547,7 +18544,7 @@ def parse_args():
         help=f"LLM 翻譯模型名稱 (預設 {DEFAULT_TRANSLATE_MODEL}，伺服器沒有時改用 qwen2.5:14b)")
     parser.add_argument(
         "--llm-host", metavar="HOST", dest="ollama_host",
-        help="LLM 伺服器位址，自動偵測 Ollama 或 OpenAI 相容 (例如 192.168.1.40:11434)")
+        help="LLM 伺服器位址：主機:連接埠，或完整網址（http／https，可含反向代理的路徑，例如 https://llm.example.com/v1；沒寫連接埠時 http＝80、https＝443），自動偵測 Ollama 或 OpenAI 相容。需要 API 金鑰時設環境變數 JTLW_LLM_API_KEY 或 config.json 的 llm_api_key")
     parser.add_argument(
         "--list-devices", action="store_true",
         help="列出可用音訊裝置後離開")
@@ -18707,20 +18704,35 @@ def resolve_model(model_name):
     sys.exit(1)
 
 
+# LLM 伺服器的完整位址（v2.31.4，2026-10-13 客戶的 Ollama 前面有 LiteLLM＋nginx 反向代理，填 http://主機/v1 一直「無法連線 主機:11434」）：
+# 以前只認 http、沒寫連接埠就補 11434、路徑整段丟掉、不能帶 API 金鑰。比照 JTDT（LLMClient：完整網址＋Bearer 金鑰）。
+# 位址照舊以 (host, port) 在程式裡傳，https 與路徑記在這裡，組網址一律經 _llm_url、送請求一律經 _llm_request
+_LLM_EP = {}            # (host, port) → (scheme, 路徑前綴；不含結尾的 /v1)
+
+
 def _parse_llm_host(text, default_port=None):
-    """LLM 伺服器位址「主機」「主機:連接埠」「http://主機:連接埠/路徑」→ (host, port, None)；格式不對 → (None, None, 說明)。
-    命令列、互動選單、WebUI 都用這一支（以前四個地方各自 rsplit，連接埠打錯就默默改用 11434，
-    `http://` 開頭會組成 http://http://…；2026-10-08 有人填 http://10.1.1.35:111434，只得到籠統的「無法連線」）"""
+    """LLM 伺服器位址「主機」「主機:連接埠」「http(s)://主機[:連接埠][/路徑][/v1]」→ (host, port, None)；格式不對 → (None, None, 說明)。
+    命令列、互動選單、WebUI、REST API 都用這一支（以前四個地方各自 rsplit，連接埠打錯就默默改用 11434，
+    `http://` 開頭會組成 http://http://…；2026-10-08 有人填 http://10.1.1.35:111434，只得到籠統的「無法連線」）。
+    只寫主機時連接埠照舊是 Ollama 的 11434；寫了 http:// 或 https:// 而沒寫連接埠時是 80／443（反向代理）"""
     if default_port is None:
         default_port = OLLAMA_PORT
     s = (text or "").strip()
     if not s:
         return None, None, "未填入主機位址"
-    if s.lower().startswith("https://"):
-        return None, None, "目前只支援 http，請填「主機:連接埠」（例如 192.168.1.40:11434）"
-    if s.lower().startswith("http://"):
-        s = s[7:]
-    s = s.split("/", 1)[0]                       # 貼上 OpenAI 相容的網址（…/v1）時去掉路徑
+    scheme, given = "http", False
+    low = s.lower()
+    if low.startswith(("http://", "https://")):
+        scheme, given = ("https" if low.startswith("https://") else "http"), True
+        s = s.split("://", 1)[1]
+    elif "://" in s:
+        return None, None, f"只支援 http:// 或 https://（收到「{text.strip()}」）"
+    s, _, path = s.partition("/")
+    if any(c in path for c in " \t?#@\\"):
+        return None, None, f"主機位址「{text.strip()}」格式不正確（路徑不能有空白、?、#）"
+    path = "/" + path.strip("/") if path.strip("/") else ""
+    if path.lower().endswith("/v1"):            # OpenAI 相容的網址（…/v1）：/v1 由程式自己接
+        path = path[:-3]
     host, port_txt = s, None
     if s.startswith("["):                        # IPv6：[::1]:11434
         end = s.find("]")
@@ -18737,14 +18749,63 @@ def _parse_llm_host(text, default_port=None):
         return None, None, "IPv6 位址請用方括號，例如 [::1]:11434"
     if not host or any(c in host for c in " \t@?#\\"):
         return None, None, f"主機位址「{text.strip()}」格式不正確"
-    port = default_port
+    port = (443 if scheme == "https" else 80) if given else default_port
     if port_txt is not None:
         if not port_txt.isdigit():
             return None, None, f"連接埠「{port_txt}」不是數字（例如 192.168.1.40:11434）"
         port = int(port_txt)
         if not 1 <= port <= 65535:
             return None, None, f"連接埠 {port} 超出範圍（要 1～65535；Ollama 預設 11434）"
+    _LLM_EP[(host, port)] = (scheme, path)
     return host, port, None
+
+
+def _llm_url(host, port, path):
+    """LLM 伺服器上某支 API 的完整網址（path 以 / 開頭，例如 /api/tags、/v1/chat/completions）"""
+    scheme, prefix = _LLM_EP.get((host, port), ("http", ""))
+    hp = host if (scheme, port) in (("http", 80), ("https", 443)) else f"{host}:{port}"
+    return f"{scheme}://{hp}{prefix}{path}"
+
+
+def _llm_display(host, port):
+    """給人看、也能原樣再交給 --llm-host 的位址：一般的 Ollama 寫「主機:連接埠」，https 或有路徑的寫完整網址"""
+    if not host:
+        return ""
+    scheme, prefix = _LLM_EP.get((host, port), ("http", ""))
+    if scheme == "http" and not prefix:
+        return f"{host}:{port}"
+    return _llm_url(host, port, "")
+
+
+def _llm_api_key():
+    """LLM 伺服器的 API 金鑰（LiteLLM 等）：環境變數 JTLW_LLM_API_KEY ＞ config.json 的 llm_api_key；沒有回空字串。
+    不從命令列參數讀：命令列在 ps 看得到"""
+    key = os.environ.get("JTLW_LLM_API_KEY", "").strip()
+    if not key:
+        try:
+            key = str(load_config().get("llm_api_key") or "").strip()
+        except Exception:
+            key = ""
+    return key
+
+
+def _llm_request(url, data=None, headers=None, method=None):
+    """送到 LLM 伺服器的請求：有 API 金鑰就帶 Authorization: Bearer（只送 LLM 伺服器，不送別的服務）"""
+    h = dict(headers or {})
+    key = _llm_api_key()
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    return urllib.request.Request(url, data=data, headers=h, method=method)
+
+
+def _llm_save_config(cfg, host, port):
+    """互動選單選好的 LLM 位址寫進設定：舊欄位 llm_host／llm_port 照寫（舊版也讀得懂），https 或有路徑時另存完整網址 llm_url"""
+    cfg["llm_host"], cfg["llm_port"] = host, port
+    full = _llm_display(host, port)
+    if "://" in full:
+        cfg["llm_url"] = full
+    else:
+        cfg.pop("llm_url", None)
 
 
 def _ask_llm_host():
@@ -18767,6 +18828,11 @@ def _ask_llm_host():
 def _resolve_ollama_host(args):
     """從 args 解析 LLM 伺服器 host/port，無設定時回傳 (None, port)；--llm-host 格式不對時說明並結束"""
     host, port = OLLAMA_HOST, OLLAMA_PORT
+    if not args.ollama_host and _config.get("llm_url"):
+        # 設定檔存的完整網址（https、反向代理的路徑）：解析一次，網址才組得出來
+        h, p, err = _parse_llm_host(_config["llm_url"])
+        if not err:
+            host, port = h, p
     if args.ollama_host:
         host, port, err = _parse_llm_host(args.ollama_host)
         if err:
@@ -19324,7 +19390,7 @@ def main():
                        summary_model=summary_model if summary_mode in ("both", "summary") else None,
                        engine=engine if engine in ("argos", "nllb") else None,
                        llm_model=ollama_model if need_translate and engine == "llm" else None,
-                       llm_host=f"{host}:{port}" if need_translate and engine == "llm" and host else None,
+                       llm_host=_llm_display(host, port) if need_translate and engine == "llm" and host else None,
                        topic=meeting_topic,
                        local_asr=args.local_asr)
         if not _confirm_start(_build_cli_command(**_cli_kw)):
@@ -19910,7 +19976,7 @@ def main():
             _cli_kw = dict(mode=mode, model=model_name, topic=meeting_topic,
                            engine=engine,
                            llm_model=ollama_model if engine == "llm" else None,
-                           llm_host=f"{host}:{port}" if engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if engine == "llm" else None,
                            denoise=args.denoise, speak_me=args.speak_me, speak_them=args.speak_them,
                            interp_intro=args.interp_intro, passthrough=args.passthrough,
                            speak_me_voice=args.speak_me_voice, speak_them_voice=args.speak_them_voice,
@@ -20033,7 +20099,7 @@ def main():
                            scene=args.scene, topic=meeting_topic,
                            llm_model=ollama_model if mode in _TRANSLATE_MODES and engine == "llm" else None,
                            engine=engine if mode in _TRANSLATE_MODES else None,
-                           llm_host=f"{host}:{port}" if mode in _TRANSLATE_MODES and engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if mode in _TRANSLATE_MODES and engine == "llm" else None,
                            record=args.record, rec_device=args.rec_device,
                            denoise=args.denoise)
             if not _confirm_start(_build_cli_command(**_cli_kw)):
@@ -20121,7 +20187,7 @@ def main():
                            device=args.device, topic=meeting_topic,
                            llm_model=ollama_model if mode == "en2zh" and engine == "llm" else None,
                            engine=engine if mode == "en2zh" else None,
-                           llm_host=f"{host}:{port}" if mode == "en2zh" and engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if mode == "en2zh" and engine == "llm" else None,
                            record=args.record, rec_device=args.rec_device)
             if not _confirm_start(_build_cli_command(**_cli_kw)):
                 sys.exit(0)
@@ -20226,7 +20292,7 @@ def main():
                            device=args.device, topic=meeting_topic,
                            llm_model=ollama_model if mode in _TRANSLATE_MODES and engine == "llm" else None,
                            engine=engine if mode in _TRANSLATE_MODES else None,
-                           llm_host=f"{host}:{port}" if mode in _TRANSLATE_MODES and engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if mode in _TRANSLATE_MODES and engine == "llm" else None,
                            record=args.record, rec_device=args.rec_device,
                            mic=args.mic, denoise=args.denoise)
             if not _confirm_start(_build_cli_command(**_cli_kw)):
@@ -20356,7 +20422,7 @@ def main():
             _cli_kw = dict(mode=mode, model=model_name, topic=meeting_topic,
                            engine=engine,
                            llm_model=model if engine == "llm" else None,
-                           llm_host=f"{host}:{port}" if engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if engine == "llm" else None,
                            denoise=args.denoise, speak_me=args.speak_me, speak_them=args.speak_them,
                            interp_intro=args.interp_intro, passthrough=args.passthrough,
                            speak_me_voice=args.speak_me_voice, speak_them_voice=args.speak_them_voice,
@@ -20449,7 +20515,7 @@ def main():
                            record=record, rec_device=rec_device,
                            engine=engine if mode in _TRANSLATE_MODES else None,
                            llm_model=model if mode in _TRANSLATE_MODES and engine == "llm" else None,
-                           llm_host=f"{host}:{port}" if mode in _TRANSLATE_MODES and engine == "llm" else None,
+                           llm_host=_llm_display(host, port) if mode in _TRANSLATE_MODES and engine == "llm" else None,
                            denoise=args.denoise)
             if not _confirm_start(_build_cli_command(**_cli_kw)):
                 sys.exit(0)
@@ -20567,7 +20633,7 @@ def main():
                                record=record, rec_device=rec_device,
                                engine=engine if mode == "en2zh" and engine else None,
                                llm_model=model if mode == "en2zh" and engine == "llm" else None,
-                               llm_host=f"{host}:{port}" if mode == "en2zh" and engine == "llm" else None)
+                               llm_host=_llm_display(host, port) if mode == "en2zh" and engine == "llm" else None)
                 if not _confirm_start(_build_cli_command(**_cli_kw)):
                     sys.exit(0)
                 run_stream_moonshine(capture_id, translator, ms_model_name, mode,
@@ -20598,7 +20664,7 @@ def main():
                                    record=record,
                                    engine=engine if mode in _TRANSLATE_MODES else None,
                                    llm_model=model if _need_llm else None,
-                                   llm_host=f"{host}:{port}" if _need_llm else None,
+                                   llm_host=_llm_display(host, port) if _need_llm else None,
                                    mic=True, denoise=args.denoise)
                     if not _confirm_start(_build_cli_command(**_cli_kw)):
                         sys.exit(0)
@@ -20622,7 +20688,7 @@ def main():
                                    record=record, rec_device=rec_device,
                                    engine=engine if mode in _TRANSLATE_MODES else None,
                                    llm_model=model if _need_llm else None,
-                                   llm_host=f"{host}:{port}" if _need_llm else None,
+                                   llm_host=_llm_display(host, port) if _need_llm else None,
                                    denoise=args.denoise)
                     if not _confirm_start(_build_cli_command(**_cli_kw)):
                         sys.exit(0)
@@ -20640,7 +20706,7 @@ def main():
                                    record=record, rec_device=rec_device,
                                    engine=engine if mode in _TRANSLATE_MODES else None,
                                    llm_model=model if _need_llm else None,
-                                   llm_host=f"{host}:{port}" if _need_llm else None)
+                                   llm_host=_llm_display(host, port) if _need_llm else None)
                     if not _confirm_start(_build_cli_command(**_cli_kw)):
                         sys.exit(0)
                     run_stream(capture_id, translator, model_name, model_path, length_ms, step_ms, mode,

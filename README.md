@@ -1,4 +1,4 @@
-# jt-live-whisper v2.31.3
+# jt-live-whisper v2.31.4
 
 **100% 全地端 AI 語音工具箱**：即時轉錄、即時翻譯、錄音檔批次處理、講者辨識、會議摘要、台灣華語朗讀，所有 AI 模型皆在自有設備上執行，資料不經過任何雲端服務。
 
@@ -724,7 +724,7 @@ cd C:\jt-live-whisper
 | `-s`, `--scene SCENE` | 使用場景 (`meeting` / `training` / `presentation` / `subtitle`) | `training` |
 | `-e`, `--engine ENGINE` | 翻譯引擎 (`llm` / `nllb` / `argos`) | `llm` |
 | `--llm-model MODEL` | LLM 翻譯模型 | `gemma4:26b`（伺服器沒有時改用 `qwen2.5:14b`） |
-| `--llm-host HOST` | LLM 伺服器位址（自動偵測 Ollama 或 OpenAI 相容） | |
+| `--llm-host HOST` | LLM 伺服器位址：`主機:連接埠`，或完整網址（http／https、反向代理的路徑，例如 `https://llm.example.com/v1`）；自動偵測 Ollama 或 OpenAI 相容。要 API 金鑰時設環境變數 `JTLW_LLM_API_KEY` 或 `config.json` 的 `llm_api_key` | |
 | `--topic TOPIC` | 會議主題（提升翻譯與摘要品質） | |
 | `-d`, `--device ID` | 音訊裝置 ID（可用 `--list-devices` 查詢） | 自動偵測 |
 | `--list-devices` | 列出可用音訊裝置後離開 | |

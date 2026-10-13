@@ -74,8 +74,9 @@ jt-live-whisper 的設計原則是**資料不出去**：語音、逐字稿、翻
   **代理完全不加轉送標頭時（例如 nginx 只寫了 `proxy_pass`）程式分不出請求是從代理來的，仍會被當成本機（不需要密碼）**，所以一定要設
 - **REST API**（給其他系統串接）：每個呼叫端一把金鑰（只存雜湊），**每個呼叫端只看得到自己送的作業**；
   從網址抓音檔時只允許設定好的主機（避免被拿來探測內網）
-- **連線加密**：WebUI 的 TLS 預設關閉、REST API 預設開啟；**GPU 伺服器與 LLM 伺服器（例如 Ollama）的連線是 HTTP，沒有加密**。
-  密碼、音訊、逐字稿就算在同一個網段也可能被看到，建議 WebUI 開 TLS，GPU 與 LLM 伺服器放在可信任的內網或 VPN
+- **連線加密**：WebUI 的 TLS 預設關閉、REST API 預設開啟；**GPU 伺服器的連線是 HTTP，沒有加密；LLM 伺服器（例如 Ollama）預設也是 HTTP**，
+  v2.31.4 起可以填 https 網址（例如放在 nginx 反向代理後面）。密碼、音訊、逐字稿就算在同一個網段也可能被看到，建議 WebUI 開 TLS，GPU 與 LLM 伺服器放在可信任的內網或 VPN。
+  LLM 伺服器的 API 金鑰（LiteLLM 等，v2.31.4 起）**以明文存在 `config.json`**（每次都要原樣送出），請限制這個檔案的權限
 - **伺服器版**：服務以安裝資料夾的擁有者身分執行（不會因為用 sudo 安裝就一律以 root 執行）
 
 ### 可追溯、可人工覆核
@@ -133,7 +134,7 @@ jt-live-whisper 的設計原則是**資料不出去**：語音、逐字稿、翻
       設定管理密碼與唯讀密碼，限制允許連線的 IP；**傳送密碼、音訊、逐字稿的連線都建議開 TLS，同網段也一樣**
 - [ ] **放在反向代理後面**：設定 `webui.trusted_proxies`，並讓代理送出 `X-Forwarded-For`（nginx：`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`）。
       代理完全不加轉送標頭時，程式分不出請求是從代理來的，會被當成本機（不需要密碼）
-- [ ] **GPU 伺服器與 LLM 伺服器放在內網**：它們的連線沒有加密；用防火牆只開給需要的電腦，跨網段請走 VPN
+- [ ] **GPU 伺服器與 LLM 伺服器放在內網**：GPU 伺服器的連線沒有加密、LLM 伺服器預設也沒有（可改用 https）；用防火牆只開給需要的電腦，跨網段請走 VPN
 - [ ] **主機安全**：作業系統與套件更新、登入帳號管理、開啟磁碟加密（FileVault、BitLocker、LUKS）
 - [ ] **REST API 金鑰**：每個串接的系統各發一把，不共用；不用時撤銷
 - [ ] **模型授權**：確認你選用的模型授權符合你的用途（特別是 NLLB 600M 僅限非商業用途）
@@ -180,7 +181,7 @@ jt-live-whisper 的設計原則是**資料不出去**：語音、逐字稿、翻
 | 控制項 | 本工具箱提供的 | 你的組織要做的 |
 |---|---|---|
 | **5.9** 資訊及相關資產清冊<br>Inventory of information and other associated assets | 資料固定存在幾個位置：`recordings/`、`logs/`、`tts_voices/`、`config.json`（伺服器版的 REST API 另有 `api_data/`）；使用的模型與授權列在文件 | 把這些資料、GPU 伺服器、LLM 伺服器列入資產清冊，指定負責人 |
-| **5.14** 資訊傳送<br>Information transfer | 內容只送到你設定的 GPU 伺服器與 LLM 伺服器；WebUI 可以開 TLS，REST API 預設加密；字幕轉發預設關閉。GPU 伺服器與 LLM 伺服器的連線是 HTTP、沒有加密 | 規定哪些內容可以傳到哪裡；GPU 伺服器與 LLM 伺服器的連線放在內網或 VPN |
+| **5.14** 資訊傳送<br>Information transfer | 內容只送到你設定的 GPU 伺服器與 LLM 伺服器；WebUI 可以開 TLS，REST API 預設加密；字幕轉發預設關閉。GPU 伺服器的連線是 HTTP、沒有加密，LLM 伺服器預設也是 HTTP（v2.31.4 起可用 https） | 規定哪些內容可以傳到哪裡；GPU 伺服器與 LLM 伺服器的連線放在內網或 VPN |
 | **5.15** 存取控制<br>Access control | WebUI 分管理與唯讀兩種密碼、可以限制允許連線的 IP；安全設定、轉發等含認證的設定頁只能在本機打開（放在反向代理後面時要設定信任的代理） | 訂出誰可以使用、從哪裡連線 |
 | **5.17** 鑑別資訊<br>Authentication information | 密碼與 API 金鑰只存雜湊；日誌不記錄金鑰與授權標頭 | 密碼強度、保管與更換方式 |
 | **5.18** 存取權限<br>Access rights | REST API 每個串接的系統一把金鑰，可以個別撤銷 | 定期檢視金鑰與密碼，不用的撤銷 |
@@ -196,7 +197,7 @@ jt-live-whisper 的設計原則是**資料不出去**：語音、逐字稿、翻
 | **8.12** 資料洩露預防（部分）<br>Data leakage prevention | WebUI 不載入外部的字型、腳本或追蹤程式；REST API 從網址抓音檔只允許設定好的主機（主要是防止被拿來探測內網）。這些不是資料外洩防護（DLP）系統 | 端點與網路的資料外洩防護 |
 | **8.15** 日誌（部分）<br>Logging | REST API 記錄每個請求（含授權失敗與來源 IP）與每件作業的每個步驟，不記錄金鑰、授權標頭、詞彙庫與逐字稿內容。WebUI 的登入失敗與設定變更、REST API 金鑰的新增與撤銷目前沒有記錄 | 日誌的保存期限、集中保存、定期檢視；需要時用主機或反向代理的存取紀錄補上 WebUI 的部分 |
 | **8.20、8.22** 網路安全、網路區隔<br>Networks security, Segregation of networks | WebUI 可以限制允許連線的 IP；放在反向代理後面時，設定信任的代理（`trusted_proxies`）後只採信這些代理轉來的來源位址 | GPU 伺服器與 LLM 伺服器放在內網，防火牆只開給需要的電腦，跨網段走 VPN；用反向代理時設定 `trusted_proxies` |
-| **8.24** 密碼技術之使用<br>Use of cryptography | TLS（WebUI 可選、預設關閉；REST API 預設開啟；可以換成組織自己的憑證）；密碼與金鑰以雜湊保存。GPU 伺服器與 LLM 伺服器的連線沒有加密 | 憑證管理；磁碟加密；GPU 與 LLM 伺服器的連線放在內網或 VPN |
+| **8.24** 密碼技術之使用<br>Use of cryptography | TLS（WebUI 可選、預設關閉；REST API 預設開啟；可以換成組織自己的憑證）；密碼與金鑰以雜湊保存。GPU 伺服器的連線沒有加密、LLM 伺服器預設也沒有（v2.31.4 起可用 https）；LLM 伺服器的 API 金鑰以明文存在 config.json | 憑證管理；磁碟加密；GPU 與 LLM 伺服器的連線放在內網或 VPN |
 | **8.29** 開發及驗收中之安全測試<br>Security testing in development and acceptance | 每次發版前跑守門測試（三個平台、升級、全新安裝、WebUI 授權檢查）；測試程式與結果沒有公開 | 導入與升級前在自己的環境驗收 |
 | **8.32** 變更管理<br>Change management | 每一版的改動記在 CHANGELOG；已安裝的模型與套件不會自己更新（朗讀模型固定版本，其他模型與套件在安裝時取得當時的版本）；升級由管理者執行，GPU 伺服器的自動更新預設關閉 | 升級前看 CHANGELOG、先在測試環境試、排定升級時間、保留前一版以便還原 |
 
