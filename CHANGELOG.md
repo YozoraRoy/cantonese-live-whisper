@@ -1,5 +1,13 @@
 # Changelog
 
+### v2.31.5 (2026-10-14)
+
+**修正：沒有裝 Moonshine 的電腦，即時模式開「降噪」直接當掉（GitHub issue #6，感謝 @nick8592 回報並附上原因與修法）**
+- 錯誤是 `NameError: name 'np' is not defined`。WebUI 的「降噪」預設勾選，所以 Windows、Linux（多半沒有 Moonshine）用 WebUI 開即時模式，一處理到聲音就結束。v2.26.13 起
+- 原因：主程式模組層級唯一的 numpy import 在 Moonshine 那段裡，Moonshine 裝得起來才有；我們的測試機有裝，所以一直沒發現
+- 同一個原因還有一處：GPU 伺服器即時字幕另外選錄音裝置「錄音至檔案」時的 sounddevice，一起修
+- 新測試掃描整支主程式：用到 numpy／sounddevice 的函式一定要自己 import；也實際在沒有模組層級 numpy 的情況下跑一次降噪
+
 ### v2.31.4 (2026-10-13)
 
 **修正：LLM 伺服器在反向代理（nginx、LiteLLM）後面連不上**

@@ -2497,6 +2497,8 @@ def _make_denoiser(denoise):
             print(f"  {C_DIM}{hint}{RESET}", flush=True)
         return _identity
 
+    import numpy as np      # 不可靠模組層級的 np：那個只在 Moonshine 裝得起來時才 import（issue #6：v2.26.13～v2.31.4 沒裝 Moonshine 的機器開降噪就當掉）
+
     def _denoise(audio, sr):
         peak = np.max(np.abs(audio))
         out = _nr_reduce(y=audio, sr=sr, stationary=True, prop_decrease=0.8)
@@ -2729,7 +2731,7 @@ ASR_ENGINES = [
     ("moonshine", "Moonshine", "真串流，低延遲，僅英文"),
 ]
 
-APP_VERSION = "2.31.4"
+APP_VERSION = "2.31.5"
 
 # faster-whisper 離線辨識參數（含長音檔幻覺防護）— 標準模式
 # - condition_on_previous_text=False：切斷上一段 prompt 傳染，避免一個短句卡住後幻覺自我強化
@@ -8010,6 +8012,8 @@ def run_stream_moonshine(capture_id: int, translator, moonshine_model_name: str,
                          record: bool = False, rec_device: int = None,
                          meeting_topic: str = None):
     """使用 Moonshine ASR 引擎即時串流辨識"""
+    import numpy as np
+    import sounddevice as sd
 
     # 取得 Moonshine 模型
     arch = _moonshine_model_arch(moonshine_model_name)
@@ -8530,6 +8534,7 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
                     use_separate_rec = False
             elif _mixer is None:
                 # 非 Windows WASAPI 的獨立錄音裝置
+                import sounddevice as sd      # 模組層級的 sd 只在 Moonshine 裝得起來時才有（同 issue #6 的問題）
                 rec_info = sd.query_devices(rec_device)
                 rec_sr = int(rec_info["default_samplerate"])
                 rec_ch = max(rec_info["max_input_channels"], 1)
