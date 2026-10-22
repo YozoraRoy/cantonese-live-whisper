@@ -418,6 +418,60 @@ def _to_traditional(text):
         return _s2twp_safe(text)
     return text
 
+
+_YUE2ZH_EN_FIX = {
+    "discuss": "討論", "discussing": "討論", "discussed": "討論", "discussion": "討論",
+    "update": "更新", "updating": "更新", "updated": "更新",
+    "confirm": "確認", "confirming": "確認", "confirmed": "確認",
+    "arrange": "安排", "arranging": "安排", "arranged": "安排",
+    "review": "檢視", "reviewing": "檢視", "reviewed": "檢視",
+    "schedule": "排程", "scheduling": "排程", "scheduled": "排程",
+    "prepare": "準備", "preparing": "準備", "prepared": "準備",
+    "finish": "完成", "finishing": "完成", "finished": "完成",
+    "continue": "繼續", "continuing": "繼續", "continued": "繼續",
+}
+
+
+def _fix_yue2zh_english(text):
+    """qwen 偶爾把粵語動詞吐成英文（例：「主要 Discuss 下週」）。
+
+    只換掉常見的英文動詞，而且是獨立單字；專有名詞、檔名（Report.pdf）
+    或縮寫不會被動到。真正的解法是 prompt，這裡只是最後一道保險。
+    """
+    if not text or not re.search(r"[\u3400-\u9fff]", text):
+        return text
+    for en, zh in _YUE2ZH_EN_FIX.items():
+        text = re.sub(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(en)}(?![A-Za-z0-9_.-])",
+            zh, text, flags=re.IGNORECASE,
+        )
+    return text
+
+
+def _trim_stream_overlap(history, cur, min_overlap=6, require_boundary=False):
+    """即時模式相鄰音訊窗有重疊，去掉 cur 開頭已出現過的內容。
+
+    history 是最近所有「完整」辨識結果串起來的字串。ASR 對重疊音訊
+    常會從中間某句開始重吐，因此不能只比對上一句；找出 cur 最長且
+    在 history 出現過的開頭，只回傳後面的新內容。找不到就原樣返回。
+    回傳空字串代表這一批全是舊內容，呼叫端應跳過。
+
+    require_boundary=True 時，裁切點必須落在標點上。yue2zh 要交給 LLM
+    翻譯，若從詞語中間切開（例如「計劃」被切成「劃」）會翻出完全錯誤的
+    意思；寧可多保留一點重複，也不要給 LLM 半個詞。
+    """
+    if not history or not cur:
+        return cur
+    _boundary = "，。！？、；：,.!?;:"
+    max_n = min(len(cur), 400)
+    for n in range(max_n, min_overlap - 1, -1):
+        if history.rfind(cur[:n]) == -1:
+            continue
+        if require_boundary and cur[n - 1] not in _boundary:
+            continue
+        return cur[n:].lstrip("，。！？、；：,.!?;: \t")
+    return cur
+
 # Moonshine ASR（選用，未安裝時自動降級為 Whisper only）
 _MOONSHINE_AVAILABLE = False
 try:
@@ -1742,6 +1796,7 @@ MODE_PRESETS = [
     ("zh2ja", "中翻日字幕", "中文語音 → 翻譯成日文"),
     ("ko2zh", "韓翻中字幕", "韓文語音 → 翻譯成繁體中文"),
     ("zh2ko", "中翻韓字幕", "中文語音 → 翻譯成韓文"),
+    ("yue2zh", "粵轉繁中字幕", "粵語語音 → 翻譯成繁體中文書面語"),
     ("en_zh", "英中雙向字幕", "對方說英文翻中文 + 自己說中文翻英文"),
     ("ja_zh", "日中雙向字幕", "對方說日文翻中文 + 自己說中文翻日文"),
     ("ko_zh", "韓中雙向字幕", "對方說韓文翻中文 + 自己說中文翻韓文"),
@@ -1749,6 +1804,7 @@ MODE_PRESETS = [
     ("zh", "中文轉錄", "中文語音 → 直接顯示繁體中文"),
     ("ja", "日文轉錄", "日文語音 → 直接顯示日文"),
     ("ko", "韓文轉錄", "韓文語音 → 直接顯示韓文"),
+    ("yue", "粵語轉錄", "粵語語音 → 直接顯示繁體中文（保留粵語口語）"),
     ("nan", "台語轉錄", "台語語音 → 直接顯示繁體中文（Breeze-ASR-26）"),
     ("nan2en", "台翻英字幕", "台語語音 → 翻譯成英文"),
     ("record", "純錄音", f"僅錄製音訊為 {RECORDING_FORMAT.upper()} 檔"),
@@ -1759,11 +1815,14 @@ _EN_INPUT_MODES = ("en2zh", "en")
 _ZH_INPUT_MODES = ("zh2en", "zh", "zh2ja", "zh2ko")
 _JA_INPUT_MODES = ("ja2zh", "ja")
 _KO_INPUT_MODES = ("ko2zh", "ko")      # v2.22.0
+_YUE_INPUT_MODES = ("yue", "yue2zh")   # 粵語輸入（Whisper large-v3 系模型，language="yue"）
 _NAN_INPUT_MODES = ("nan", "nan2en")   # 台語輸入（Breeze-ASR-26 專用，輸出為漢字）
 _TRANSLATE_MODES = ("en2zh", "zh2en", "ja2zh", "zh2ja", "ko2zh", "zh2ko",
+                    "yue2zh",
                     "en_zh", "ja_zh", "ko_zh", "nan2en")
 _NOENG_MODELS = ("zh", "zh2en", "zh2ja", "ja2zh", "ja", "en_zh", "ja_zh",
                  "ko2zh", "zh2ko", "ko", "ko_zh",
+                 "yue", "yue2zh",
                  "nan", "nan2en")  # 不能用 .en 模型
 _BIDI_MODES = ("en_zh", "ja_zh", "ko_zh")  # 雙向翻譯模式（用硬體音訊來源分流）
 _BIDI_LB_DIR = {"en_zh": "en2zh", "ja_zh": "ja2zh", "ko_zh": "ko2zh"}   # 系統音訊翻譯方向
@@ -1779,6 +1838,8 @@ _MODE_LABELS = {
     "zh2ja": (C_ZH, "中", C_JA, "日"),
     "ko2zh": (C_KO, "韓", C_ZH, "中"),
     "zh2ko": (C_ZH, "中", C_KO, "韓"),
+    "yue":   (C_ZH, "粵", C_ZH, "粵"),   # 粵語辨識結果為繁體中文（保留口語）
+    "yue2zh": (C_ZH, "粵", C_ZH, "中"),
     "en":    (C_EN, "EN", C_EN, "EN"),
     "zh":    (C_ZH, "中", C_ZH, "中"),
     "ja":    (C_JA, "日", C_JA, "日"),
@@ -1844,17 +1905,27 @@ _BIDI_LABELS = {
         "loopback": (C_KO, "韓", C_KO, "韓"),
         "mic":      (C_MY_KO, "韓", C_MY_KO, "韓"),
     },
+    "yue": {
+        "loopback": (C_ZH, "粵", C_ZH, "粵"),
+        "mic":      (C_MY_ZH, "粵", C_MY_ZH, "粵"),
+    },
+    "yue2zh": {
+        "loopback": (C_ZH, "粵", C_ZH, "中"),
+        "mic":      (C_MY_ZH, "粵", C_MY_ZH, "中"),
+    },
 }
 
 # 雙向模式語言對照表（模組級，供 process_bidi_audio_files 等使用）
 _LB_LANG = {"en2zh": "en", "zh2en": "zh", "ja2zh": "ja", "zh2ja": "zh",
             "ko2zh": "ko", "zh2ko": "zh",
             "en": "en", "zh": "zh", "ja": "ja", "ko": "ko",
+            "yue": "yue", "yue2zh": "yue",
             "en_zh": "en", "ja_zh": "ja", "ko_zh": "ko",
             "nan": "en", "nan2en": "en"}
 _MIC_LANG = {"en2zh": "zh", "zh2en": "en", "ja2zh": "zh", "zh2ja": "ja",
              "ko2zh": "zh", "zh2ko": "ko",
              "en": "en", "zh": "zh", "ja": "ja", "ko": "ko",
+             "yue": "yue", "yue2zh": "yue",
              "en_zh": "zh", "ja_zh": "zh", "ko_zh": "zh",
              "nan": "en", "nan2en": "en"}
 
@@ -1869,6 +1940,18 @@ _BREEZE_REPOS = {
 # 微調時沿用 Whisper 的 <|en|> 語言 token（見模型 config.json 的 forced_decoder_ids），
 # 傳其他語言會明顯降低品質，故台語模式一律用 "en"。
 _BREEZE_WHISPER_LANG = "en"
+
+# ── 粵語辨識模型（Whisper large-v3-turbo 粵語／英語微調）────────────
+# 官方 Whisper 對粵語常輸出書面華語；此模型保留粵語口語（冇、嘅、咗），
+# 且 large-v3 系列才支援 <|yue|> 語言 token。faster-whisper 可直接讀 CT2 格式。
+YUE_MODEL = "yue-whisper-turbo"
+YUE_REPO = "JackyHoCL/whisper-large-v3-turbo-cantonese-yue-english-ct2"
+_YUE_WHISPER_LANG = "yue"
+
+
+def _is_yue_mode(mode):
+    """是否為粵語輸入模式（yue / yue2zh）"""
+    return mode in _YUE_INPUT_MODES
 
 
 # 華語模式也可選用 Breeze-ASR-26：台灣的會議常是華語為主、夾雜台語。
@@ -1891,6 +1974,12 @@ def _enforce_nan_model(mode, model_name, quiet=False):
     - 其他模式不支援 Breeze-ASR-26，改用該模式的推薦模型
     未選用 Breeze-ASR-26 時，回傳值與處理流程都和原本相同。"""
     global _breeze_selected
+    if model_name == YUE_MODEL and mode not in _YUE_INPUT_MODES:
+        fallback = _recommended_whisper_model(mode)
+        if not quiet:
+            print(f"  {C_HIGHLIGHT}[提示] {YUE_MODEL} 僅支援粵語模式（yue / yue2zh），"
+                  f"已改用 {fallback}{RESET}")
+        model_name = fallback
     if mode in _NAN_INPUT_MODES:
         _breeze_selected = False
         if model_name != BREEZE_MODEL and not quiet:
@@ -2312,6 +2401,8 @@ def _mode_whisper_lang(mode):
     """依模式決定要傳給 Whisper 的語言代碼"""
     if _is_nan_mode(mode):
         return _BREEZE_WHISPER_LANG
+    if _is_yue_mode(mode):
+        return _YUE_WHISPER_LANG
     if mode in _EN_INPUT_MODES:
         return "en"
     if mode in _JA_INPUT_MODES:
@@ -2329,6 +2420,8 @@ def _resolve_fw_model(model_name, remote=False):
         if remote or _fw_local_cuda_ok():
             return _BREEZE_REPOS["fw_fp16"]
         return _BREEZE_REPOS["fw_int8"]
+    if model_name == YUE_MODEL:
+        return YUE_REPO
     return model_name
 
 
@@ -2454,6 +2547,8 @@ _MLX_CAPABLE_MODELS = {"large-v3-turbo", "large-v3", "medium", "small", "base", 
 def _local_asr_use_mlx(model_name, args=None):
     """Python 端本機即時辨識是否改用 mlx-whisper GPU 加速（僅 Apple Silicon）。
     使用者明確指定 --asr faster-whisper 時尊重其選擇。"""
+    if model_name == YUE_MODEL:
+        return False   # 粵語微調模型只有 faster-whisper（CT2）格式
     if args is not None and getattr(args, "asr", None) == "faster-whisper":
         return False
     if model_name not in _MLX_CAPABLE_MODELS:
@@ -2631,6 +2726,8 @@ def _recommended_mic_engine(mode="zh", remote_whisper_cfg=None):
     """推薦麥克風轉錄的 ASR 引擎與模型。
     優先順序：GPU 伺服器 > mlx GPU > 本機 CPU。
     回傳 (engine, model)：engine = 'remote' | 'mlx' | 'cpu', model = 模型名。"""
+    if _is_yue_mode(mode):
+        return "cpu", YUE_MODEL   # 粵語微調模型只有本機 faster-whisper 能載入
     _need_multilang = mode in _NOENG_MODELS
     # 1. 有 GPU 伺服器 → 優先遠端（macOS / Windows 都適用）
     if remote_whisper_cfg:
@@ -2666,6 +2763,8 @@ def _recommended_whisper_model(mode="en2zh"):
     Apple Silicon 有 Metal GPU 加速，同核心數效能遠高於 Intel CPU。"""
     if mode in _NAN_INPUT_MODES:
         return BREEZE_MODEL   # 台語只有 Breeze-ASR-26 可用
+    if _is_yue_mode(mode):
+        return YUE_MODEL      # 粵語需 large-v3 系模型（支援 <|yue|>）
     cores = os.cpu_count() or 2
     _need_multilang = mode in _NOENG_MODELS
     has_metal = _is_apple_silicon()
@@ -4231,6 +4330,10 @@ def select_whisper_model(mode="en2zh", use_faster_whisper=False):
         _enforce_nan_model(mode, BREEZE_MODEL, quiet=True)
         print(f"  {C_OK}→ 辨識模型：{BREEZE_MODEL}（台語專用）{RESET}\n")
         return BREEZE_MODEL, None
+    # 粵語模式固定用粵語微調模型（faster-whisper 首次自動下載）
+    if _is_yue_mode(mode):
+        print(f"  {C_OK}→ 辨識模型：{YUE_MODEL}（粵語微調，faster-whisper）{RESET}\n")
+        return YUE_MODEL, None
     # 列出所有適用模型（不限已安裝）
     candidates = []
     for name, filename, desc in WHISPER_MODELS:
@@ -4318,6 +4421,8 @@ def select_whisper_model(mode="en2zh", use_faster_whisper=False):
 def select_whisper_model_remote(mode="en2zh"):
     """伺服器模式選擇 Whisper 模型（不檢查本機 .bin 檔案，顯示伺服器快取標籤）。
     回傳 model_name (str)。"""
+    if _is_yue_mode(mode):
+        return YUE_MODEL   # 粵語模式固定本機 faster-whisper（不應走到這裡）
     _need_multilang = mode in _NOENG_MODELS
     available = []
     for name, _filename, desc in WHISPER_MODELS:
@@ -4840,6 +4945,7 @@ class OllamaTranslator:
                      "zh2ja": self._build_prompt_zh2ja,
                      "ko2zh": self._build_prompt_ko2zh,
                      "zh2ko": self._build_prompt_zh2ko,
+                     "yue2zh": self._build_prompt_yue2zh,
                      # 台語辨識結果本身就是漢字，翻英文與中翻英同一條路徑
                      "nan2en": self._build_prompt_zh2en}
         builder = _dispatch.get(self.direction, self._build_prompt_en2zh)
@@ -4866,6 +4972,37 @@ class OllamaTranslator:
             for src, dst in context:
                 prompt += f"英：{src}\n中：{dst}\n"
         prompt += f"\n請翻譯：{text}"
+        return prompt
+
+    def _build_prompt_yue2zh(self, text, context):
+        prompt = (
+            "你是粵語（廣東話）即時字幕編輯，負責把粵語口語轉成自然、通順的台灣繁體中文書面語。\n"
+            "規則：\n"
+            "1. 保留原意與語氣，整句改寫成書面語，不要逐字硬譯，也不要加入原文沒有的內容\n"
+            "2. 把粵語詞彙改成書面語（例：冇→沒有、嘅→的、咗→了、喺→在、唔→不、佢→他、佢哋→他們、"
+            "睇→看、俾→給、而家→現在、等陣→等一下、邊度→哪裡、點解→為什麼、咁→這麼、咁樣→這樣、"
+            "今日→今天、聽日→明天、琴日→昨天、下個禮拜→下週）\n"
+            "3. 必須使用繁體中文，禁止使用簡體中文（例：用「軟體」不用「软件」，用「記憶體」不用「内存」）\n"
+            "4. 使用台灣用語：軟體、網路、記憶體、程式、伺服器、資料庫、影片、滑鼠、設定、訊息\n"
+            "5. 專有名詞維持英文原文（如 iPhone、API、Kubernetes、GitHub）；人名維持原文，除非是確定的知名中文人名\n"
+            "6. 只輸出一行書面語中文，不要輸出粵語原文、拼音、解釋、替代版本\n"
+            "7. 只能包含繁體中文；只有專有名詞、產品名、縮寫可保留英文，禁止英文動詞、介系詞或整句英文（例：不要寫「主要 discussing」，要寫「主要討論」）\n"
+            "8. 禁止添加任何評論、括號註解、翻譯說明（如「此句不完整」「無法翻譯」等）\n"
+            "9. 即使原文不完整或語意不清，也直接改寫，不要跳過或加說明\n"
+            "10. 直接輸出結果，不要使用 <think> 標籤或任何思考過程\n"
+            "11. 忠實轉寫原意，禁止因政治因素修改任何用語（國名、地名、人物稱謂須與原文一致）\n"
+        )
+        if self.meeting_topic:
+            prompt += f"\n本次會議主題：{self.meeting_topic}\n請根據此主題的領域知識選用適當的書面語詞彙。\n"
+        if context:
+            prompt += "\n最近的對話上下文（粵語原文 → 書面語）：\n"
+            for src, dst in context:
+                prompt += f"粵：{src}\n書面語：{dst}\n"
+        prompt += (
+            "\n再次提醒：輸出必須全部是繁體中文；英文只能出現在專有名詞、產品名、縮寫，"
+            "不要用 discuss、update、confirm 等英文動詞。\n"
+        )
+        prompt += f"\n請改成書面語：{text}"
         return prompt
 
     def _build_prompt_zh2en(self, text, context):
@@ -5124,6 +5261,8 @@ class OllamaTranslator:
                 result = result.split("\n")[0].strip()
                 if self._contains_bad_chars(result):
                     return ""
+            if self.direction == "yue2zh":
+                result = _fix_yue2zh_english(result)
             # 更新上下文
             self.context.append((text, result))
             if len(self.context) > self.MAX_CONTEXT:
@@ -5246,6 +5385,7 @@ class NllbTranslator:
         "zh": "zho_Hant",
         "ja": "jpn_Jpan",
         "ko": "kor_Hang",
+        "yue": "yue_Hant",
     }
     _DIRECTION_MAP = {
         "en2zh": ("en", "zh"),
@@ -5254,6 +5394,7 @@ class NllbTranslator:
         "zh2ja": ("zh", "ja"),
         "ko2zh": ("ko", "zh"),
         "zh2ko": ("zh", "ko"),
+        "yue2zh": ("yue", "zh"),
         "nan2en": ("zh", "en"),
     }
 
@@ -6972,7 +7113,10 @@ def _input_interactive_menu(args):
         else:
             loc_idx = default_loc
 
-        if REMOTE_WHISPER_CONFIG:
+        if _is_yue_mode(mode_key):
+            use_remote_whisper = False
+            print(f"  {C_OK}→ 粵語模式固定使用本機 faster-whisper（不支援 GPU 伺服器）{RESET}")
+        elif REMOTE_WHISPER_CONFIG:
             use_remote_whisper = loc_idx == 0
         else:
             if loc_idx == 1:
@@ -6986,7 +7130,10 @@ def _input_interactive_menu(args):
 
         # ── 第三步前：辨識模型（依位置推薦）──
         available_models = []
-        if mode_key in _NAN_INPUT_MODES:
+        if _is_yue_mode(mode_key):
+            # 粵語微調模型（CT2，固定本機 faster-whisper）
+            available_models.append((YUE_MODEL, "粵語微調，保留口語並輸出繁體中文（固定本機）"))
+        elif mode_key in _NAN_INPUT_MODES:
             # 台語只有 Breeze-ASR-26 可用
             available_models.append((BREEZE_MODEL, "台語專用，輸出漢字（固定本機辨識）"))
         else:
@@ -7480,7 +7627,7 @@ def run_stream(capture_id: int, translator, model_name: str, model_path: str,
     # 翻譯記錄檔（以時間命名）
     from datetime import datetime
     log_prefixes = {"en2zh": "英翻中_逐字稿", "zh2en": "中翻英_逐字稿", "ja2zh": "日翻中_逐字稿", "zh2ja": "中翻日_逐字稿", "en": "英文_逐字稿", "zh": "中文_逐字稿", "ja": "日文_逐字稿",
-                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿"}
+                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿", "yue": "粵語_逐字稿", "yue2zh": "粵翻中_逐字稿"}
     log_prefix = log_prefixes.get(mode, "逐字稿")
     topic_part = _topic_to_filename_part(meeting_topic)
     log_filename = datetime.now().strftime(f"{log_prefix}{topic_part}_%Y%m%d_%H%M%S.txt")
@@ -7710,6 +7857,8 @@ def run_stream(capture_id: int, translator, model_name: str, model_path: str,
         "ko2zh": "說韓文即可看到中文翻譯",
         "zh2ko": "說中文即可看到韓文翻譯",
         "ko": "說韓文即可看到字幕",
+        "yue": "說粵語即可看到繁體中文字幕（保留口語）",
+        "yue2zh": "說粵語即可看到繁體中文書面語",
     }
     print(f"{C_OK}{BOLD}開始監聽...{RESET} {C_WHITE}{listen_hints.get(mode, '')}{RESET}\n\n", flush=True)
     _webui_send({"type": "progress", "stage": "", "detail": ""})
@@ -7776,7 +7925,7 @@ def run_stream(capture_id: int, translator, model_name: str, model_path: str,
         result = translator.translate(src_text)
         elapsed = time.monotonic() - t0
         if result:
-            result = _s2twp_safe(result) if not isinstance(translator, OllamaTranslator) else _to_traditional(result)
+            result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
         with _trans_lock:
             _trans_pending[seq] = (src_text, result, elapsed, asr_elapsed)
         _drain_translations(log_path)
@@ -8026,7 +8175,7 @@ def run_stream_moonshine(capture_id: int, translator, moonshine_model_name: str,
     log_prefixes = {"en2zh": "英翻中_逐字稿", "zh2en": "中翻英_逐字稿",
                     "ja2zh": "日翻中_逐字稿", "zh2ja": "中翻日_逐字稿",
                     "en": "英文_逐字稿", "zh": "中文_逐字稿", "ja": "日文_逐字稿",
-                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿"}
+                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿", "yue": "粵語_逐字稿", "yue2zh": "粵翻中_逐字稿"}
     log_prefix = log_prefixes.get(mode, "逐字稿")
     topic_part = _topic_to_filename_part(meeting_topic)
     log_filename = datetime.now().strftime(f"{log_prefix}{topic_part}_%Y%m%d_%H%M%S.txt")
@@ -8116,7 +8265,7 @@ def run_stream_moonshine(capture_id: int, translator, moonshine_model_name: str,
         result = translator.translate(src_text)
         elapsed = time.monotonic() - t0
         if result:
-            result = _s2twp_safe(result) if not isinstance(translator, OllamaTranslator) else _to_traditional(result)
+            result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
         with _trans_lock:
             _trans_pending[seq] = (src_text, result, elapsed, asr_elapsed)
         _drain_translations(log_path)
@@ -8437,7 +8586,7 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
     log_prefixes = {"en2zh": "英翻中_逐字稿", "zh2en": "中翻英_逐字稿",
                     "ja2zh": "日翻中_逐字稿", "zh2ja": "中翻日_逐字稿",
                     "en": "英文_逐字稿", "zh": "中文_逐字稿", "ja": "日文_逐字稿",
-                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿"}
+                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿", "yue": "粵語_逐字稿", "yue2zh": "粵翻中_逐字稿"}
     log_prefix = log_prefixes.get(mode, "逐字稿")
     topic_part = _topic_to_filename_part(meeting_topic)
     log_filename = datetime.now().strftime(f"{log_prefix}{topic_part}_%Y%m%d_%H%M%S.txt")
@@ -8706,7 +8855,7 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
         result = translator.translate(src_text)
         elapsed = time.monotonic() - t0
         if result:
-            result = _s2twp_safe(result) if not isinstance(translator, OllamaTranslator) else _to_traditional(result)
+            result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
         with _trans_lock:
             _trans_pending[seq] = (src_text, result, elapsed, asr_elapsed)
         _drain_translations(_log_path)
@@ -8782,7 +8931,7 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
                 if not line:
                     continue
                 # 簡繁轉換（中文模式）
-                if mode in _ZH_INPUT_MODES:
+                if mode in _ZH_INPUT_MODES or _is_yue_mode(mode):
                     line = _s2twp_safe(line)
                 # 幻覺過濾
                 if hallucination_check(line):
@@ -8883,6 +9032,8 @@ def run_stream_remote(capture_id: int, translator, model_name: str,
         "ko2zh": "說韓文即可看到中文翻譯",
         "zh2ko": "說中文即可看到韓文翻譯",
         "ko": "說韓文即可看到字幕",
+        "yue": "說粵語即可看到繁體中文字幕（保留口語）",
+        "yue2zh": "說粵語即可看到繁體中文書面語",
     }
     print(f"{C_OK}{BOLD}開始監聽...{RESET} {C_WHITE}{listen_hints.get(mode, '')}{RESET}\n\n", flush=True)
     _webui_send({"type": "progress", "stage": "", "detail": ""})
@@ -8982,7 +9133,7 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
     log_prefixes = {"en2zh": "英翻中_逐字稿", "zh2en": "中翻英_逐字稿",
                     "ja2zh": "日翻中_逐字稿", "zh2ja": "中翻日_逐字稿",
                     "en": "英文_逐字稿", "zh": "中文_逐字稿", "ja": "日文_逐字稿",
-                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿"}
+                    "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿", "ko": "韓文_逐字稿", "yue": "粵語_逐字稿", "yue2zh": "粵翻中_逐字稿"}
     log_prefix = log_prefixes.get(mode, "逐字稿")
     topic_part = _topic_to_filename_part(meeting_topic)
     log_filename = datetime.now().strftime(f"{log_prefix}{topic_part}_%Y%m%d_%H%M%S.txt")
@@ -9377,7 +9528,7 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
         result = translator.translate(src_text)
         elapsed = time.monotonic() - t0
         if result:
-            result = _s2twp_safe(result) if not isinstance(translator, OllamaTranslator) else _to_traditional(result)
+            result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
         with _trans_lock:
             _trans_pending[seq] = (src_text, result, elapsed, asr_elapsed)
         _drain_translations(_log_path)
@@ -9432,6 +9583,7 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
 
     # ── 去重 ──
     recent_texts = deque(maxlen=10)
+    yue_prev_full = [""]
 
     def is_duplicate(text):
         text_lower = text.lower().strip()
@@ -9476,13 +9628,24 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
             for line in lines:
                 if not line:
                     continue
-                if mode in _ZH_INPUT_MODES:
+                if mode in _ZH_INPUT_MODES or _is_yue_mode(mode):
                     line = _s2twp_safe(line)
                 if hallucination_check(line):
                     continue
-                if is_duplicate(line):
-                    continue
-                recent_texts.append(line.lower().strip())
+                if _is_yue_mode(mode):
+                    # 重疊窗只顯示/翻譯新增內容；裁切點要求在標點上，
+                    # 避免把「計劃」切成「劃」而讓 LLM 翻錯
+                    _cur_full = line
+                    line = _trim_stream_overlap(
+                        yue_prev_full[0], line, require_boundary=True,
+                    )
+                    yue_prev_full[0] = (yue_prev_full[0] + " " + _cur_full)[-4000:]
+                    if not line:
+                        continue
+                else:
+                    if is_duplicate(line):
+                        continue
+                    recent_texts.append(line.lower().strip())
                 if mode in _TRANSLATE_MODES and translator:
                     seq = _trans_seq[0]; _trans_seq[0] += 1
                     threading.Thread(
@@ -9586,6 +9749,8 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
         "ko2zh": "說韓文即可看到中文翻譯",
         "zh2ko": "說中文即可看到韓文翻譯",
         "ko": "說韓文即可看到字幕",
+        "yue": "說粵語即可看到繁體中文字幕（保留口語）",
+        "yue2zh": "說粵語即可看到繁體中文書面語",
     }
     print(f"\n{C_OK}{BOLD}開始監聽...{RESET} {C_WHITE}{listen_hints.get(mode, '')}{RESET}\n\n", flush=True)
     _webui_send({"type": "started", "mode": mode})
@@ -9723,14 +9888,16 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
                  "ja": _is_ja_hallucination, "en_zh": _is_en_hallucination,
                  "ja_zh": _is_ja_hallucination,
                  "ko2zh": _is_ko_hallucination, "zh2ko": _is_zh_hallucination,
-                 "ko": _is_ko_hallucination, "ko_zh": _is_ko_hallucination}
+                 "ko": _is_ko_hallucination, "ko_zh": _is_ko_hallucination,
+                 "yue": _is_zh_hallucination, "yue2zh": _is_zh_hallucination}
     _MIC_HALLU = {"en2zh": _is_zh_hallucination, "zh2en": _is_en_hallucination,
                   "ja2zh": _is_zh_hallucination, "zh2ja": _is_ja_hallucination,
                   "en": _is_en_hallucination, "zh": _is_zh_hallucination,
                   "ja": _is_ja_hallucination, "en_zh": _is_zh_hallucination,
                   "ja_zh": _is_zh_hallucination,
                   "ko2zh": _is_zh_hallucination, "zh2ko": _is_ko_hallucination,
-                  "ko": _is_ko_hallucination, "ko_zh": _is_zh_hallucination}
+                  "ko": _is_ko_hallucination, "ko_zh": _is_zh_hallucination,
+                  "yue": _is_zh_hallucination, "yue2zh": _is_zh_hallucination}
     lb_lang = _LB_LANG[mode]
     mic_lang = _MIC_LANG[mode]
     lb_hallu = _LB_HALLU[mode]
@@ -9750,7 +9917,8 @@ def run_stream_bidirectional(lb_device_id, mic_device_id,
                    "en2zh": "英翻中_逐字稿",
                    "zh2en": "中翻英_逐字稿", "ja2zh": "日翻中_逐字稿",
                    "zh2ja": "中翻日_逐字稿", "ko2zh": "韓翻中_逐字稿", "zh2ko": "中翻韓_逐字稿",
-                   "en": "英文轉錄", "zh": "中文轉錄", "ja": "日文轉錄", "ko": "韓文轉錄"}
+                   "en": "英文轉錄", "zh": "中文轉錄", "ja": "日文轉錄", "ko": "韓文轉錄",
+                   "yue": "粵語轉錄", "yue2zh": "粵翻中"}
     log_prefix = _LOG_PREFIX.get(mode, "逐字稿")
     topic_part = _topic_to_filename_part(meeting_topic)
     log_filename = datetime.now().strftime(f"{log_prefix}{topic_part}_%Y%m%d_%H%M%S.txt")
@@ -11014,6 +11182,13 @@ def render_markdown(text):
 
 def _wait_for_esc():
     """等待使用者按 ESC 鍵（或 Ctrl+C）才退出"""
+    # 管線／WebUI／排程執行時 stdin 不是終端，等 ESC 會永遠卡住；
+    # 一般互動式 PowerShell 仍會停在這裡，讓使用者看完結果再離開
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return
+    except Exception:
+        return
     if IS_WINDOWS:
         try:
             while True:
@@ -11076,6 +11251,7 @@ class _AudioRecorder:
 
     _MODE_FNAME = {"en2zh": "英翻中", "zh2en": "中翻英", "ja2zh": "日翻中", "zh2ja": "中翻日",
                    "ko2zh": "韓翻中", "zh2ko": "中翻韓",
+                   "yue2zh": "粵翻中", "yue": "粵語",
                    "en_zh": "英中雙向", "ja_zh": "日中雙向", "ko_zh": "韓中雙向",
                    "en": "英文", "zh": "中文", "ja": "日文", "ko": "韓文"}
 
@@ -15284,7 +15460,8 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
     log_prefixes = {"en2zh": "英翻中_時間逐字稿", "zh2en": "中翻英_時間逐字稿",
                     "ja2zh": "日翻中_時間逐字稿", "zh2ja": "中翻日_時間逐字稿",
                     "en": "英文_時間逐字稿", "zh": "中文_時間逐字稿", "ja": "日文_時間逐字稿",
-                    "ko2zh": "韓翻中_時間逐字稿", "zh2ko": "中翻韓_時間逐字稿", "ko": "韓文_時間逐字稿"}
+                    "ko2zh": "韓翻中_時間逐字稿", "zh2ko": "中翻韓_時間逐字稿", "ko": "韓文_時間逐字稿",
+                    "yue": "粵語_時間逐字稿", "yue2zh": "粵翻中_時間逐字稿"}
     log_prefix = log_prefixes.get(mode, "時間逐字稿")
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_dir = os.path.join(LOG_DIR, f"{basename}_{ts_str}")
@@ -15498,13 +15675,20 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
             text = seg_raw["text"].strip()
             if not text:
                 continue
+            # 結尾靜音偶爾會產生極短的幻覺段（粵語微調模型實測會吐
+            # 「learn something new today」這類訓練資料殘留）：
+            # 0 秒直接丟；不到 0.6 秒卻有 10 個字以上也幾乎不可能是真的
+            _seg_dur = seg_raw["end"] - seg_raw["start"]
+            if _seg_dur < 0.05 or (_seg_dur < 0.6 and
+                                   len(re.sub(r"\s", "", text)) >= 10):
+                continue
             text = re.sub(r"\(.*?\)", "", text).strip()
             text = re.sub(r"\[.*?\]", "", text).strip()
             if not text:
                 continue
             if hallucination_check(text):
                 continue
-            if mode in _ZH_INPUT_MODES:
+            if mode in _ZH_INPUT_MODES or _is_yue_mode(mode):
                 text = _s2twp_safe(text)
             valid_segments.append({
                 "start": seg_raw["start"],
@@ -15601,7 +15785,7 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
                     elapsed = time.monotonic() - t0
 
                     if result:
-                        result = _s2twp_safe(result) if not isinstance(translator, OllamaTranslator) else _to_traditional(result)
+                        result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
                         _print_with_badge(
                             f"{dst_color}{BOLD}{ts_tag} {spk_tag_term}[{dst_label}] {result}{RESET}",
                             _speed_badge_color(elapsed), elapsed, "譯")
@@ -15847,7 +16031,8 @@ def process_bidi_audio_files(lb_path, mic_path, mode, translator_lb, translator_
                     "zh2en": "中翻英_配對時間逐字稿", "ja2zh": "日翻中_配對時間逐字稿",
                     "zh2ja": "中翻日_配對時間逐字稿", "ko2zh": "韓翻中_配對時間逐字稿",
                     "zh2ko": "中翻韓_配對時間逐字稿", "en": "英文_配對時間逐字稿",
-                    "zh": "中文_配對時間逐字稿", "ja": "日文_配對時間逐字稿", "ko": "韓文_配對時間逐字稿"}
+                    "zh": "中文_配對時間逐字稿", "ja": "日文_配對時間逐字稿", "ko": "韓文_配對時間逐字稿",
+                    "yue": "粵語_配對時間逐字稿", "yue2zh": "粵翻中_配對時間逐字稿"}
     log_prefix = log_prefixes.get(mode, "配對_時間逐字稿")
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_dir = os.path.join(LOG_DIR, f"{lb_basename}_{ts_str}")
@@ -18216,7 +18401,7 @@ def _refresh_title_bar():
         m, s = divmod(rem, 60)
         time_str = f"{h:02d}:{m:02d}:{s:02d}"
         count = _status_bar_state["count"]
-        label = "轉錄" if _status_bar_state["mode"] in ("zh", "en", "ja", "ko") else "翻譯"
+        label = "轉錄" if _status_bar_state["mode"] in ("zh", "en", "ja", "ko", "yue") else "翻譯"
         parts = [time_str]
         # 波形圖
         hist = _status_bar_state.get("rms_history")
@@ -18309,7 +18494,7 @@ def _draw_status_bar(rows=None, cols=None):
         m, s = divmod(rem, 60)
         time_str = f"{h:02d}:{m:02d}:{s:02d}"
         count = _status_bar_state["count"]
-        label = "轉錄" if _status_bar_state["mode"] in ("zh", "en", "ja", "ko") else "翻譯"
+        label = "轉錄" if _status_bar_state["mode"] in ("zh", "en", "ja", "ko", "yue") else "翻譯"
         # 波形文字（12 字元）
         wave_str = ""
         lock = _status_bar_state.get("rms_lock")
@@ -18515,7 +18700,7 @@ def parse_args():
         epilog=epilog,
     )
     mode_names = list(MODE_MAP.keys())
-    model_names = [name for name, _, _ in WHISPER_MODELS] + [BREEZE_MODEL, QWEN_MODEL]
+    model_names = [name for name, _, _ in WHISPER_MODELS] + [BREEZE_MODEL, QWEN_MODEL, YUE_MODEL]
     scene_names = list(SCENE_MAP.keys())
     moonshine_model_names = [name for name, _, _ in MOONSHINE_MODELS]
     parser.add_argument(
@@ -18528,6 +18713,7 @@ def parse_args():
         "-m", "--model", choices=model_names, metavar="MODEL",
         help=f"語音辨識模型 ({' / '.join(model_names)}，--input 預設 large-v3-turbo，中日文品質最好用 -m large-v3；"
              f"{BREEZE_MODEL} 限台語與華語模式，台灣華語夾雜台語時可選用；"
+             f"{YUE_MODEL} 限粵語模式（yue / yue2zh）；"
              f"{QWEN_MODEL}（實驗）限離線中／英／韓，GPU 伺服器或本機（Apple Silicon 用 MLX、其他平台用 transformers）)")
     parser.add_argument(
         "--moonshine-model", choices=moonshine_model_names, metavar="MMODEL",
@@ -19197,7 +19383,9 @@ def main():
             num_speakers = args.num_speakers
             do_summarize = args.summarize is not None
             summary_mode = "both" if do_summarize else "correct_only"  # 有 --summarize 才產摘要，否則只校正
-            if mode in _NAN_INPUT_MODES:
+            if _is_yue_mode(mode):
+                _default_fw = YUE_MODEL   # 粵語微調模型（large-v3-turbo 系）
+            elif mode in _NAN_INPUT_MODES:
                 _default_fw = BREEZE_MODEL   # 未指定 -m 時不該提示「已忽略指定的模型」
             else:
                 _default_fw = "large-v3" if (mode in _NOENG_MODELS and (REMOTE_WHISPER_CONFIG or _has_local_gpu())) else "large-v3-turbo"
@@ -19239,6 +19427,10 @@ def main():
         if use_remote_whisper and _is_nan_mode(mode):
             use_remote_whisper = False
             print(f"  {C_DIM}[{BREEZE_MODEL}] 使用本機辨識（GPU 伺服器的辨識參數不適用本模型）{RESET}")
+        # 粵語微調模型同樣固定本機 faster-whisper
+        if use_remote_whisper and _is_yue_mode(mode):
+            use_remote_whisper = False
+            print(f"  {C_DIM}[{YUE_MODEL}] 使用本機辨識（粵語微調模型只在本機 faster-whisper 執行）{RESET}")
 
         # --diarize 檢查 resemblyzer / spectralcluster
         if diarize:
@@ -19262,8 +19454,8 @@ def main():
         ollama_available = False
         need_llm_translate = need_translate and engine == "llm"
         need_llm_summary = do_summarize and summary_mode in ("both", "summary")
-        # 純轉錄模式：有 LLM 設定時自動校正逐字稿
-        need_llm_correct = (not need_translate) and host is not None
+        # 純轉錄模式：有 LLM 設定時自動校正逐字稿（粵語原文模式不校正，以免被改成書面華語）
+        need_llm_correct = (not need_translate) and host is not None and not _is_yue_mode(mode)
         need_remote_asr = use_remote_whisper and REMOTE_WHISPER_CONFIG
         need_check = need_llm_translate or need_llm_summary or need_llm_correct or need_remote_asr
 
@@ -19402,7 +19594,10 @@ def main():
             sys.exit(0)
 
         # 逐檔處理
-        _do_llm_correct = can_summarize and summary_mode in ("both", "correct_only")
+        # 粵語模式（yue／yue2zh）預設不做 LLM 校正：yue 要保留口語原文，
+        # yue2zh 的翻譯已由 LLM 產生；除非使用者明確加了 --summarize
+        _do_llm_correct = (can_summarize and summary_mode in ("both", "correct_only")
+                           and not (_is_yue_mode(mode) and args.summarize is None))
         log_paths = []  # list of (log_path, original_input_path, session_dir)
         html_to_open = []  # 收集所有 HTML，最後一起開啟
 
@@ -20040,11 +20235,14 @@ def main():
         # GPU 伺服器套用的是一般模型的參數組，對本模型會大幅劣化
         if args.model or mode in _NAN_INPUT_MODES:
             _enforce_nan_model(mode, args.model or BREEZE_MODEL, quiet=True)
-        # GPU 伺服器 Whisper 即時模式（非 Moonshine、非 --local-asr、非 Breeze-ASR-26）
+        # GPU 伺服器 Whisper 即時模式（非 Moonshine、非 --local-asr、非 Breeze-ASR-26、非粵語）
         use_remote_cli = (REMOTE_WHISPER_CONFIG and not args.local_asr
-                          and asr_engine != "moonshine" and not _is_nan_mode(mode))
+                          and asr_engine != "moonshine" and not _is_nan_mode(mode)
+                          and not _is_yue_mode(mode))
         if REMOTE_WHISPER_CONFIG and not args.local_asr and _is_nan_mode(mode):
             print(f"  {C_DIM}[{BREEZE_MODEL}] 改用本機辨識（GPU 伺服器的辨識參數不適用本模型）{RESET}")
+        if REMOTE_WHISPER_CONFIG and not args.local_asr and _is_yue_mode(mode):
+            print(f"  {C_DIM}[{YUE_MODEL}] 改用本機辨識（粵語微調模型只在本機 faster-whisper 執行）{RESET}")
         # --mic + GPU 伺服器：麥克風也送遠端辨識（不再限制）
         if use_remote_cli:
             # 伺服器模式：不需本機 whisper-stream
@@ -20218,8 +20416,10 @@ def main():
             # 先判斷是否改用 Python 端本機辨識（在 resolve_model 之前）
             # WASAPI Loopback 與 ScreenCaptureKit 都不是 SDL2 裝置，whisper-stream 讀不到
             # 台語只有 Breeze-ASR-26，whisper.cpp 沒有對應的 ggml 模型，一律走 Python 端
+            # 粵語微調模型是 CT2 格式，也只有 faster-whisper 能載入
             # Linux 不編譯 whisper.cpp，本機即時辨識一律走 Python 端
-            _cli_use_local_fw = _is_nan_mode(mode) or IS_LINUX or _win_without_whisper_stream()
+            _cli_use_local_fw = (_is_nan_mode(mode) or _is_yue_mode(mode)
+                                 or IS_LINUX or _win_without_whisper_stream())
             if _win_without_whisper_stream():
                 print(f"{C_DIM}  {_win_whisper_stream_problem()}，即時辨識使用 faster-whisper 本機辨識{RESET}")
             if args.device is not None:
@@ -20471,6 +20671,8 @@ def main():
         use_remote_asr = False
         if REMOTE_WHISPER_CONFIG and mode in _NAN_INPUT_MODES:
             print(f"  {C_OK}→ 辨識位置自動設為「本機」（台語模型 Breeze-ASR-26 只在本機執行）{RESET}")
+        elif REMOTE_WHISPER_CONFIG and _is_yue_mode(mode):
+            print(f"  {C_OK}→ 辨識位置自動設為「本機」（粵語微調模型只在本機 faster-whisper 執行）{RESET}")
         elif REMOTE_WHISPER_CONFIG:
             if _early_mic:
                 print(f"  {C_OK}→ 辨識位置自動設為「本機」（麥克風轉錄需要本機 ASR）{RESET}")
@@ -20541,6 +20743,10 @@ def main():
 
             # whisper.cpp (SDL2) 讀不到 WASAPI Loopback / ScreenCaptureKit，標記改走 Python 端辨識
             _use_local_fw = False
+            if _is_yue_mode(mode):
+                _use_local_fw = True  # 粵語微調模型是 CT2 格式，只有 faster-whisper 能載入
+                print(f"\n{C_DIM}  粵語模式使用 faster-whisper 本機辨識"
+                      f"{'（CUDA）' if _fw_local_cuda_ok() else '（CPU）'}{RESET}")
             if IS_MACOS and asr_engine == "whisper" and _sck_available():
                 _use_local_fw = True  # 改用 ScreenCaptureKit + mlx/faster-whisper
                 _sck_engine_label = ("mlx-whisper GPU" if (_is_apple_silicon() and _has_mlx_whisper())
@@ -20571,6 +20777,8 @@ def main():
                 model_name, model_path = select_whisper_model(mode, use_faster_whisper=_use_local_fw)
                 if _is_nan_mode(mode):
                     _use_local_fw = True  # Breeze-ASR-26 沒有 ggml 版，whisper-stream 跑不了
+                if _is_yue_mode(mode):
+                    _use_local_fw = True  # 粵語微調模型只有 faster-whisper 能載入
                 length_ms, step_ms = select_scene()
                 length_ms, step_ms = _nan_adjust_step(mode, length_ms, step_ms)
 

@@ -1,5 +1,7 @@
 # jt-live-whisper v2.31.5
 
+> 本 fork 增加粵語即時字幕（`yue` / `yue2zh`），說明請見 [README_YUE.md](README_YUE.md)。
+
 **100% 全地端 AI 語音工具箱**：即時轉錄、即時翻譯、錄音檔批次處理、講者辨識、會議摘要、台灣華語朗讀，所有 AI 模型皆在自有設備上執行，資料不經過任何雲端服務。
 
 ### 🌐 專案網站：**[jasoncheng7115.github.io/jt-live-whisper](https://jasoncheng7115.github.io/jt-live-whisper/)**

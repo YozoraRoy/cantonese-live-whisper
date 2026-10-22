@@ -146,6 +146,8 @@ try:
     _ZH_INPUT_MODES as _TM_ZH_MODES,
     _EN_INPUT_MODES as _TM_EN_MODES,
     _KO_INPUT_MODES as _TM_KO_MODES,
+    _YUE_INPUT_MODES as _TM_YUE_MODES,
+    YUE_MODEL as _TM_YUE_MODEL,
     _tts_output_devices as _tm_tts_output_devices,
     _INTERP_MAC_NEED as _TM_INTERP_MAC_NEED,
     _INTERP_WIN_NEED as _TM_INTERP_WIN_NEED,
@@ -171,6 +173,8 @@ except Exception:
     _TM_WHISPER_MODELS = None
     _TM_SUMMARY_MODELS = None
     _tm_recommended_whisper_model = None
+    _TM_YUE_MODES = ("yue", "yue2zh")
+    _TM_YUE_MODEL = "yue-whisper-turbo"
     _TM_SCK_LOOPBACK_ID = -300
     _TM_SCK_MIXED_ID = -400
     _tm_sck_check = None
@@ -990,6 +994,7 @@ def _get_config():
         {"value": "zh2ja", "label": "中翻日字幕", "group": "單向翻譯"},
         {"value": "ko2zh", "label": "韓翻中字幕", "group": "單向翻譯"},
         {"value": "zh2ko", "label": "中翻韓字幕", "group": "單向翻譯"},
+        {"value": "yue2zh", "label": "粵轉繁中字幕", "group": "單向翻譯"},
         {"value": "en_zh", "label": "英中雙向字幕", "group": "雙向翻譯"},
         {"value": "ja_zh", "label": "日中雙向字幕", "group": "雙向翻譯"},
         {"value": "ko_zh", "label": "韓中雙向字幕", "group": "雙向翻譯"},
@@ -997,6 +1002,7 @@ def _get_config():
         {"value": "zh", "label": "中文轉錄", "group": "轉錄"},
         {"value": "ja", "label": "日文轉錄", "group": "轉錄"},
         {"value": "ko", "label": "韓文轉錄", "group": "轉錄"},
+        {"value": "yue", "label": "粵語轉錄", "group": "轉錄"},
         {"value": "nan", "label": "台語轉錄", "group": "轉錄"},
         {"value": "nan2en", "label": "台翻英字幕", "group": "單向翻譯"},
         {"value": "record", "label": "純錄音", "group": "其他"},
@@ -1013,6 +1019,9 @@ def _get_config():
         models = [{"value": n, "label": f"{n}（{d}）"} for n, _, d in _TM_WHISPER_MODELS]
         # Breeze-ASR-26：台語專用，華語模式也可選用（台灣華語夾雜台語時），固定本機辨識
         models.append({"value": "breeze-asr-26", "label": "breeze-asr-26（台灣華語／台語，較慢，固定本機）"})
+        # 粵語微調模型（Whisper large-v3-turbo CT2；固定本機 faster-whisper）
+        models.append({"value": _TM_YUE_MODEL,
+                       "label": f"{_TM_YUE_MODEL}（粵語微調，保留口語，固定本機）"})
         qs = _qwen_status()
         if qs["server"] or qs["local"]:
             # 使用限制由後端給，前端照 limits 停用（不在前端寫死模型名稱）：
@@ -1660,13 +1669,17 @@ def _build_args(body: dict) -> list:
             args.extend(["--input", f])
     mode = body.get("mode", "en2zh")
     args.extend(["--mode", mode])
-    model = body.get("model", "large-v3-turbo")
+    # 粵語模式固定使用粵語微調模型（避免前端沿用上一個模式的一般模型）
+    if mode in _TM_YUE_MODES:
+        model = _TM_YUE_MODEL
+    else:
+        model = body.get("model", "large-v3-turbo")
     args.extend(["-m", model])
     scene = body.get("scene", "training")
     args.extend(["-s", scene])
     engine = body.get("engine")
     llm_host = (body.get("llm_host") or "").strip()
-    if engine and mode not in ("en", "zh", "ja", "ko", "nan"):
+    if engine and mode not in ("en", "zh", "ja", "ko", "nan", "yue"):
         args.extend(["-e", engine])
         if engine == "llm":
             llm_model = body.get("llm_model", "")
