@@ -1,6 +1,17 @@
 # jt-live-whisper v2.31.5
 
-> 本 fork 增加粵語即時字幕（`yue` / `yue2zh`），說明請見 [README_YUE.md](README_YUE.md)。
+> ### 這個 repo 是什麼？
+>
+> 這是 [jasoncheng7115/jt-live-whisper](https://github.com/jasoncheng7115/jt-live-whisper) 的個人 fork，**不是原作者官方版本**。
+>
+> 最近工作上的線上會議大多以粵語進行，我常常聽不懂會議內容，也跟不上討論。原專案已經把即時語音辨識、翻譯、WebUI、系統音訊擷取與地端 AI 流程做得相當完整，因此我沒有重寫整套工具，而是補上「粵語 → 繁體中文」的模式、模型與操作說明。
+>
+> 原專案由 **Jason Cheng（Jason Tools）** 開發。作者最初的動機，是參加全程英文授課的原廠線上技術課程時聽得吃力，為了補足英文聽力而打造這套工具；後續功能才越長越完整。完整的功能、安裝方式與最新消息，請以原專案為準：
+>
+> - 官方網站：<https://jasoncheng7115.github.io/jt-live-whisper/>
+> - 原專案：<https://github.com/jasoncheng7115/jt-live-whisper>
+>
+> 本 fork 的粵語使用說明與變更內容：[README_YUE.md](README_YUE.md)
 
 **100% 全地端 AI 語音工具箱**：即時轉錄、即時翻譯、錄音檔批次處理、講者辨識、會議摘要、台灣華語朗讀，所有 AI 模型皆在自有設備上執行，資料不經過任何雲端服務。
 

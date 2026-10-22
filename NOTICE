@@ -1,0 +1,21 @@
+jt-live-whisper
+Copyright (c) Jason Cheng (Jason Tools)
+
+This repository is a fork of the original jt-live-whisper project:
+
+    https://github.com/jasoncheng7115/jt-live-whisper
+
+The original project is licensed under the Apache License, Version 2.0.
+See the LICENSE file in this repository.
+
+Modifications in this fork:
+Copyright 2026 YozoraRoy
+
+  - Added Cantonese (yue) and Cantonese-to-Traditional-Chinese (yue2zh) modes.
+  - Added integration for the Cantonese Whisper model and local faster-whisper ASR.
+  - Added WebUI mode/model selection, Cantonese documentation, start script,
+    streaming overlap handling, and related fixes.
+
+This fork is not an official release of the original project and is not
+endorsed by the original author. The original project's documentation and
+website remain the authoritative source for its features.

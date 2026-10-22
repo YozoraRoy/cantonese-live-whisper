@@ -6,6 +6,9 @@ Windows 用 WASAPI Loopback），使用 whisper.cpp stream 即時轉錄，
 再翻譯成繁體中文。
 
 Author: Jason Cheng (Jason Tools)
+
+Modified by YozoraRoy (2026) for Cantonese (yue / yue2zh) support.
+See NOTICE for details.
 """
 
 import argparse

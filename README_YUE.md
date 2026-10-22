@@ -1,11 +1,60 @@
 # 粵語即時字幕（Cantonese → 繁體中文）
 
+> 這是 [YozoraRoy/cantonese-live-whisper](https://github.com/YozoraRoy/cantonese-live-whisper) 的個人 fork，**不是 Jason Cheng 的官方版本**。原專案的功能、安裝方式與最新支援，請以 [jasoncheng7115/jt-live-whisper](https://github.com/jasoncheng7115/jt-live-whisper) 為準。
+
 這個版本基於 [jasoncheng7115/jt-live-whisper](https://github.com/jasoncheng7115/jt-live-whisper)（Apache-2.0），加了兩個粵語模式：
 
 | 模式 | 輸入 | 輸出 | 需要 LLM？ |
 |---|---|---|---|
 | `yue` | 粵語語音 | 繁體中文**口語原文**（保留「冇、嘅、咗」） | 不需要 |
 | `yue2zh` | 粵語語音 | 繁體中文**書面語**（冇→沒有、佢哋→他們） | 需要（Ollama 或 OpenAI 相容伺服器） |
+
+## 我為什麼做這個 fork？
+
+不是因為我想重做一套語音工具，而是因為**工作上的線上會議大多說粵語**，我聽不懂會議內容，也無法即時跟上討論。
+
+剛好看到 Jason Cheng 的 [jt-live-whisper](https://github.com/jasoncheng7115/jt-live-whisper)，它已經具備完整的即時辨識、翻譯、WebUI、系統音訊擷取與地端 AI 能力。原作者最初是為了補足英文技術課程的聽力而打造這個工具，後來功能才越來越完整；我的需求則很單純：**在原本的架構上，補上粵語轉繁體中文的能力。**
+
+因此這個 fork 的重點不是重新實作，而是：
+
+- 新增粵語口語轉錄模式
+- 新增粵語轉繁體書面語模式
+- 讓 WebUI 與命令列都能直接選用粵語模型
+- 補上 Teams / Zoom 等系統音訊的實用說明
+- 修正實測時遇到的粵語幻覺與重疊字幕問題
+
+原專案的地端執行、隱私、零月租、系統音訊層擷取、講者辨識、AI 摘要與一鍵安裝等完整介紹，請直接看[原專案](https://github.com/jasoncheng7115/jt-live-whisper)與[官方網站](https://jasoncheng7115.github.io/jt-live-whisper/)。
+
+## 與原專案的差異
+
+| 項目 | 原專案 | 本 fork |
+|---|---|---|
+| 粵語辨識 | 以英、中、日、韓等模式為主 | 新增 `yue`、`yue2zh` 兩個粵語模式 |
+| 辨識模型 | 原專案既有 Whisper 模型 | 新增 `yue-whisper-turbo`，對應 `JackyHoCL/whisper-large-v3-turbo-cantonese-yue-english-ct2` |
+| 辨識方式 | 依原專案設定 | 粵語固定使用本機 faster-whisper、`language="yue"`，不走 whisper.cpp 或遠端 ASR |
+| 輸出內容 | 依原模式翻譯 | `yue` 保留粵語口語（冇、嘅、咗）；`yue2zh` 轉成台灣繁體書面語 |
+| 翻譯流程 | 原專案翻譯引擎 | `yue2zh` 使用 Ollama `qwen2.5:7b-instruct`，加入粵語詞彙、台灣用語與繁簡校正規則 |
+| WebUI | 原專案模式選單 | 新增粵語模式、自動鎖定粵語模型、限制不相容的翻譯引擎 |
+| 即時字幕 | 原專案滑動視窗 | 新增粵語重疊字幕裁切、零時長幻覺過濾、標點邊界裁切，避免把「計劃」切成「劃」 |
+| 使用文件 | 原專案 README | 新增 `README_YUE.md`、`start-yue.ps1`、Teams / Loopback 操作說明 |
+| 實測 | 原專案測試 | 15 秒粵語 TTS 離線測試、系統音訊 Loopback 即時測試、WebUI 模式與模型驗證 |
+
+> 本 fork 沒有改動原專案的核心架構與既有模式；主要變更集中在粵語 ASR 路由、`yue2zh` 翻譯提示、WebUI 選項與相關修正。
+
+## 實測狀況
+
+- 離線 `yue`：可正確輸出粵語口語繁體字，保留「哋、嘅、冇」。
+- 離線 `yue2zh`：可輸出繁體書面語，並避免簡體字與英文動詞殘留。
+- 即時 `yue`：已用系統音訊 Loopback 播放粵語 TTS 模擬 Teams 對方聲音，可即時產生字幕。
+- 即時 `yue2zh`：同一路徑可即時轉成繁體書面語。
+- WebUI：確認粵語模式、粵語模型自動選取與 LLM 設定正常。
+- 測試環境：Windows 11、RTX 4060 Laptop 8 GB、Ollama `qwen2.5:7b-instruct`。
+
+## 已知限制
+
+- 即時 `yue2zh` 採滑動音訊視窗，偶爾會重複上一句的尾巴；要求最乾淨的書面語，建議先錄音再用 `--input` 離線處理。
+- 目前只用 TTS 模擬 Teams 對方聲音，尚未加入真實 Teams 會議與實際麥克風長時間測試。
+- 8 GB VRAM 同時跑 Whisper turbo 與 7B LLM 實測可運作；若遇到 VRAM 不足，可改用 `qwen2.5:3b-instruct`。
 
 ## 用哪個模型？
 
@@ -157,6 +206,9 @@ ollama pull qwen2.5:3b-instruct
 **Q：第一次啟動很久？**
 - 正在下載粵語模型（約 1.6 GB）與初始化 CUDA，只有第一次會這樣。
 
-## 授權
+## 授權與致謝
 
-粵語微調模型是 MIT 授權；本專案原本的授權與元件請看 `LICENSE` 與 `COMPLIANCE.md`。
+- 本 fork 基於 [jasoncheng7115/jt-live-whisper](https://github.com/jasoncheng7115/jt-live-whisper)，沿用原專案的 **Apache-2.0** 授權；原始授權條款請看 [`LICENSE`](LICENSE)，修改說明請看 [`NOTICE`](NOTICE)。
+- 粵語微調模型 [`JackyHoCL/whisper-large-v3-turbo-cantonese-yue-english-ct2`](https://huggingface.co/JackyHoCL/whisper-large-v3-turbo-cantonese-yue-english-ct2) 為 **MIT** 授權。
+- 原專案作者：**Jason Cheng（Jason Tools）**。
+- 本 repo 是個人 fork，非原作者官方版本，也不代表原作者背書。

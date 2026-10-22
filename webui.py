@@ -8,6 +8,9 @@
 瀏覽器中完成所有設定，點「開始」後自動啟動 translate_meeting.py。
 """
 
+# Modified by YozoraRoy (2026) for Cantonese (yue / yue2zh) support.
+# See NOTICE for details.
+
 import argparse
 import asyncio
 import json
