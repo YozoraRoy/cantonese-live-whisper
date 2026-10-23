@@ -29,6 +29,7 @@ import shutil
 import threading
 import time
 import wave
+import tempfile
 import collections
 from collections import deque
 from functools import lru_cache
@@ -432,6 +433,16 @@ _YUE2ZH_EN_FIX = {
     "prepare": "準備", "preparing": "準備", "prepared": "準備",
     "finish": "完成", "finishing": "完成", "finished": "完成",
     "continue": "繼續", "continuing": "繼續", "continued": "繼續",
+    "fulfill": "滿足", "fulfilling": "滿足", "fulfilled": "滿足",
+    "refresh": "重新整理", "refreshing": "重新整理",
+    "approve": "審核", "approved": "審核", "approval": "審核",
+    "reject": "拒絕", "rejected": "拒絕",
+    "note": "備註", "recent": "最近", "item": "項目",
+    "user": "使用者", "computer": "電腦",
+    "version": "版本", "online": "線上",
+    "actually": "其實", "basically": "基本上",
+    # 這是 qwen 偶爾憑空插入的副詞，保留反而會改變語意，直接移除。
+    "nightly": "",
 }
 
 
@@ -448,7 +459,11 @@ def _fix_yue2zh_english(text):
             rf"(?<![A-Za-z0-9_.-]){re.escape(en)}(?![A-Za-z0-9_.-])",
             zh, text, flags=re.IGNORECASE,
         )
-    return text
+    # 移除替換後留下的多餘空白（例如 nightly 被刪掉時），並把
+    # 兩個中文字之間的空白接回去，避免「盡量 滿足」這種不自然斷字。
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", text)
+    return text.strip()
 
 
 def _trim_stream_overlap(history, cur, min_overlap=6, require_boundary=False):
@@ -1957,6 +1972,61 @@ def _is_yue_mode(mode):
     return mode in _YUE_INPUT_MODES
 
 
+# ── 粵語／華語混用自動路由 ─────────────────────────────────────────
+# 粵語微調模型受訓練資料影響，會把華語硬轉成粵語；實測同一段華語會議
+# 會被辨識成「Mongkok TV」「城市馬來」等完全偏離原意的內容。一般
+# large-v3-turbo 對華語則相當準確。因此粵語模式若偵測到明顯的華語特徵，
+# 只把該段落改用一般中文模型補正，純粵語段落仍保留粵語口語。
+YUE_FALLBACK_MODEL = "large-v3-turbo"
+
+_CANTO_MARKERS = set("嘅咗冇喺佢哋唔睇啲咁嚟嗰乜係呢囉啦噉俾嘢咩")
+# 只放粵語口語少見、華語常見的虛詞；「有、會、要、可以」等兩邊都用的不列入，
+# 避免把沒有粵語助詞的正常粵語句子誤判成華語。
+_MANDO_MARKERS = set("的了是在他她它这這那什么什麼没沒们們")
+# 粵語微調模型即使面對華語，仍可能硬塞「嘅、咗、係」等粵語助詞，單看
+# 助詞比例不夠。華語常用的完整詞形（「這個、我們、然後」）是更強的訊號。
+_MANDO_STRONG_WORDS = (
+    "這個", "那個", "這些", "那些", "我們", "你們", "他們", "什麼",
+    "沒有", "已經", "然後", "的話", "東西", "現在", "這是", "那是",
+    "不是", "她的", "他的", "它的",
+    # 簡體輸出也要能判斷；粵語模式偶爾會拿到簡體轉錄。
+    "这个", "那个", "这些", "那些", "我们", "你们", "他们", "什么",
+    "没有", "已经", "然后", "的话", "东西", "现在", "这是", "那是",
+)
+
+
+def _canto_mando_stats(text):
+    """回傳 (漢字數, 粵語特徵字數, 華語特徵字數)。"""
+    han = re.findall(r"[\u4e00-\u9fff]", text or "")
+    n = len(han)
+    if n == 0:
+        return 0, 0, 0
+    canto = sum(1 for ch in han if ch in _CANTO_MARKERS)
+    mando = sum(1 for ch in han if ch in _MANDO_MARKERS)
+    return n, canto, mando
+
+
+def _looks_like_mandarin(text):
+    """判斷 ASR 結果是否明顯是華語（而非粵語）。
+
+    粵語微調模型會把華語硬轉成粵語，但通常仍留下「這個、我們、然後、
+    已經」等華語詞形。以這些強訊號為主、粵語助詞比例為輔，避免只因為
+    模型塞了幾個「嘅、咗」就誤判成粵語。回傳 True 時，粵語模式應改用
+    一般中文模型重新辨識該段。
+    """
+    n, canto, mando = _canto_mando_stats(text)
+    if n < 4:
+        return False
+    canto_ratio = canto / n
+    strong = sum(text.count(word) for word in _MANDO_STRONG_WORDS)
+    # 粵語助詞密度很高時，即使出現一兩個華語詞形也視為粵語。
+    if canto_ratio >= 0.15:
+        return False
+    if strong >= 1:
+        return True
+    return mando >= max(4, n * 0.10)
+
+
 # 華語模式也可選用 Breeze-ASR-26：台灣的會議常是華語為主、夾雜台語。
 # 本模型專屬的處理（language="en"、_FW_NAN_KW、自行 VAD 切段、即時步進下限、
 # 固定本機辨識）都以 _is_nan_mode() 判斷；選用時由 _enforce_nan_model() 打開旗標，
@@ -2925,6 +2995,165 @@ def _fw_transcribe_kwargs(mode, loose=False):
     return _FW_OFFLINE_KW_LOOSE if loose else _FW_OFFLINE_KW
 
 
+def _write_wav_slice(src_path, dst_path, start_sec, end_sec):
+    """從 WAV 檔擷取指定時間區間，寫成另一個 WAV。回傳是否成功。"""
+    try:
+        with wave.open(src_path, "rb") as rf:
+            sr = rf.getframerate()
+            channels = rf.getnchannels()
+            sampwidth = rf.getsampwidth()
+            total_frames = rf.getnframes()
+            start_f = max(0, int(float(start_sec) * sr))
+            end_f = min(total_frames, int(float(end_sec) * sr))
+            if end_f <= start_f:
+                return False
+            rf.setpos(start_f)
+            frames = rf.readframes(end_f - start_f)
+        with wave.open(dst_path, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(sr)
+            wf.writeframes(frames)
+        return True
+    except Exception:
+        return False
+
+
+def _yue_fallback_offline(raw_segments, wav_path, use_loose=False):
+    """把粵語模式中的華語段落改用一般中文模型重新辨識。
+
+    粵語微調模型對華語會產生語意完全錯誤的「粵語化」內容；一般
+    large-v3-turbo 對華語準確得多。這裡只重跑被判定為華語的連續區間，
+    其餘粵語段落維持原樣，避免整份錄音被改成書面華語。
+
+    回傳 (新的 segments, 實際補正的區間數)。
+    """
+    if not raw_segments:
+        return raw_segments, 0
+
+    suspects = [i for i, s in enumerate(raw_segments)
+                if _looks_like_mandarin(s.get("text", ""))]
+    if not suspects:
+        return raw_segments, 0
+
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            _sr = wf.getframerate()
+            _total = wf.getnframes() / float(_sr)
+    except Exception:
+        return raw_segments, 0
+
+    # 把相鄰的華語段合併；邊界取前後段落的中點，避免重跑時蓋掉粵語段。
+    groups = []
+    for idx in suspects:
+        if groups and idx - groups[-1][-1] <= 1:
+            groups[-1].append(idx)
+        else:
+            groups.append([idx])
+
+    ranges = []
+    for group in groups:
+        first, last = group[0], group[-1]
+        # 把緊鄰、且沒有明顯粵語助詞的段落一起納入，避免華語句首／句尾
+        # 被切在補正範圍外，留下半句粵語化的錯誤內容。
+        while first > 0:
+            prev = raw_segments[first - 1]
+            gap = raw_segments[first]["start"] - prev["end"]
+            _n, _c, _m = _canto_mando_stats(prev.get("text", ""))
+            if gap <= 0.8 and (_n == 0 or (_c / _n) < 0.15):
+                first -= 1
+            else:
+                break
+        while last + 1 < len(raw_segments):
+            nxt = raw_segments[last + 1]
+            gap = nxt["start"] - raw_segments[last]["end"]
+            _n, _c, _m = _canto_mando_stats(nxt.get("text", ""))
+            if gap <= 0.8 and (_n == 0 or (_c / _n) < 0.15):
+                last += 1
+            else:
+                break
+        start = (0.0 if first == 0 else
+                 (raw_segments[first - 1]["end"] + raw_segments[first]["start"]) / 2.0)
+        end = (_total if last == len(raw_segments) - 1 else
+               (raw_segments[last]["end"] + raw_segments[last + 1]["start"]) / 2.0)
+        start = max(0.0, start - 0.2)
+        end = min(_total, end + 0.2)
+        if end - start >= 0.2:
+            ranges.append((start, end))
+
+    if not ranges:
+        return raw_segments, 0
+
+    span = "、".join(f"{a:.0f}–{b:.0f}s" for a, b in ranges)
+    print(f"  {C_DIM}[粵語模式] 偵測到華語段落（{span}），"
+          f"改用 {YUE_FALLBACK_MODEL} 補正{RESET}", flush=True)
+    try:
+        general_model = _call_with_ssl_retry(
+            _FwModel, _resolve_fw_model(YUE_FALLBACK_MODEL), **_fw_device_kwargs())
+    except Exception as e:
+        print(f"  {C_HIGHLIGHT}[粵語模式] 華語補正模型載入失敗（{type(e).__name__}: {e}），"
+              f"維持原辨識結果{RESET}", flush=True)
+        return raw_segments, 0
+
+    out = list(raw_segments)
+    replaced = 0
+    temp_paths = []
+    try:
+        for start, end in ranges:
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="yue_fallback_")
+            os.close(fd)
+            temp_paths.append(tmp_path)
+            if not _write_wav_slice(wav_path, tmp_path, start, end):
+                continue
+            try:
+                seg_iter, _info = general_model.transcribe(
+                    tmp_path, language="zh",
+                    **_fw_transcribe_kwargs("zh", use_loose))
+                new_segs = []
+                for seg in seg_iter:
+                    text = seg.text.strip()
+                    if text:
+                        new_segs.append({
+                            "start": seg.start + start,
+                            "end": seg.end + start,
+                            "text": text,
+                            "lang": "zh",
+                        })
+            except Exception as e:
+                print(f"  {C_DIM}[粵語模式] 華語段落補正失敗（{type(e).__name__}: {e}），"
+                      f"保留原結果{RESET}", flush=True)
+                continue
+            if not new_segs:
+                continue
+
+            # 只移除大部分落在這個區間內的舊段；邊界重疊的粵語段保留。
+            def _mostly_inside(seg):
+                seg_len = max(seg["end"] - seg["start"], 0.01)
+                overlap = max(0.0, min(seg["end"], end) - max(seg["start"], start))
+                return overlap / seg_len >= 0.5
+
+            out = [seg for seg in out if not _mostly_inside(seg)]
+            out.extend(new_segs)
+            replaced += 1
+    finally:
+        try:
+            del general_model
+        except Exception:
+            pass
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        _release_gpu_resources()
+
+    if not replaced:
+        return raw_segments, 0
+    out.sort(key=lambda seg: (seg["start"], seg["end"]))
+    print(f"  {C_OK}[粵語模式] 已補正 {replaced} 段華語內容{RESET}", flush=True)
+    return out, replaced
+
+
 def _nan_vad_windows(audio, samplerate=16000):
     """把音訊依語音活動切成不超過 _NAN_WINDOW_SEC 的視窗，回傳 [(起, 迄)] 秒。
 
@@ -3046,8 +3275,8 @@ def _drop_stuck_segments(segments, loose=False):
 
 def _analyze_audio_loudness(wav_path, sample_seconds=120):
     """用 ffmpeg volumedetect 取得 mean_volume / max_volume（dBFS）。
-    僅分析開頭 sample_seconds 秒（預設 120s）以加速長音檔處理 —— 監視器/低音量錄音
-    特性整段一致，取樣已足以判斷；對 large-v3-turbo 本機使用者尤其重要。
+    sample_seconds=0 時掃描完整檔案；離線增益需要完整峰值才能避免後段削峰。
+    預設 120s 保留給只需快速判斷音源特性的呼叫端。
     回傳 {'mean_dbfs': float, 'max_dbfs': float} 或 None（偵測失敗）。"""
     try:
         cmd = ["ffmpeg", "-nostdin", "-hide_banner"]
@@ -3074,14 +3303,28 @@ def _analyze_audio_loudness(wav_path, sample_seconds=120):
         return None
 
 
-def _boost_audio_if_quiet(wav_path, mean_dbfs, target_dbfs=-18.0, max_gain=20.0):
+def _quiet_gain(mean_dbfs, max_dbfs=None, target_dbfs=-18.0, max_gain=20.0):
+    """計算低音量音檔的增益，並保留峰值 headroom 避免削峰。
+
+    會議錄音常常 mean 很低、但峰值只差幾 dB 就滿刻度；以前只依 mean
+    加 +16.6 dB，會把峰值推到 0 dBFS 以上並造成失真，反而讓 ASR 變差。
+    """
+    gain = min(target_dbfs - mean_dbfs, max_gain)
+    if max_dbfs is not None:
+        # 留 1 dB headroom；若峰值已接近滿刻度，就不再加增益。
+        gain = min(gain, -1.0 - max_dbfs)
+    return gain
+
+
+def _boost_audio_if_quiet(wav_path, mean_dbfs, max_dbfs=None,
+                          target_dbfs=-18.0, max_gain=20.0):
     """音量偏低時提升至目標音量。
-    回傳 (處理後路徑, 是否新建暫存檔)。max_volume 留 ~3 dB headroom 避免削峰。
-    僅對 mean_volume < -30 dBFS 觸發；其餘維持原檔。
+    回傳 (處理後路徑, 是否新建暫存檔)。依 max_volume 保留峰值 headroom，
+    避免削峰失真。僅對 mean_volume < -30 dBFS 觸發；其餘維持原檔。
     使用 PCM s16le 避免重編碼 overhead，對長音檔處理時間可降至 1/5。"""
     if mean_dbfs >= -30.0:
         return wav_path, False
-    gain = min(target_dbfs - mean_dbfs, max_gain)
+    gain = _quiet_gain(mean_dbfs, max_dbfs, target_dbfs, max_gain)
     if gain <= 0:
         return wav_path, False
     base, ext = os.path.splitext(wav_path)
@@ -3133,13 +3376,25 @@ def _audio_profile(wav_path, label="", min_size_bytes=200_000):
     if not info:
         return wav_path, False, False, None
     mean_v = info["mean_dbfs"]
+    max_v = info.get("max_dbfs")
     use_loose = mean_v < -30.0
-    proc_path, boosted = (_boost_audio_if_quiet(wav_path, mean_v) if use_loose
+    if use_loose:
+        # 前 120 秒的 mean 用來判斷是否為低音量錄音；峰值則要掃完整檔，
+        # 否則後段較大的峰值會在增益後削峰。
+        full_info = _analyze_audio_loudness(wav_path, sample_seconds=0)
+        if full_info and full_info.get("max_dbfs") is not None:
+            max_v = full_info["max_dbfs"]
+    proc_path, boosted = (_boost_audio_if_quiet(wav_path, mean_v, max_v) if use_loose
                           else (wav_path, False))
     tag = f"{label} " if label else ""
     if use_loose:
-        gain = min(-18.0 - mean_v, 20.0)
-        boost_msg = f"，增益 +{gain:.1f} dB" if boosted else "（增益失敗，原檔送辨識）"
+        gain = _quiet_gain(mean_v, max_v)
+        if boosted:
+            boost_msg = f"，增益 +{gain:.1f} dB（峰值保留 1 dB headroom）"
+        elif gain <= 0:
+            boost_msg = "（峰值已接近滿刻度，不增益）"
+        else:
+            boost_msg = "（增益失敗，原檔送辨識）"
         print(f"  {C_DIM}[音源分析] {tag}mean_volume={mean_v:.1f} dBFS → 寬鬆模式{boost_msg}{RESET}")
     else:
         print(f"  {C_DIM}[音源分析] {tag}mean_volume={mean_v:.1f} dBFS → 標準模式{RESET}")
@@ -4985,11 +5240,13 @@ class OllamaTranslator:
             "2. 把粵語詞彙改成書面語（例：冇→沒有、嘅→的、咗→了、喺→在、唔→不、佢→他、佢哋→他們、"
             "睇→看、俾→給、而家→現在、等陣→等一下、邊度→哪裡、點解→為什麼、咁→這麼、咁樣→這樣、"
             "今日→今天、聽日→明天、琴日→昨天、下個禮拜→下週）\n"
+            "2-1. 若原文其實是華語（普通話），只需整理成通順的台灣繁體書面語，不要刻意加入粵語詞彙\n"
             "3. 必須使用繁體中文，禁止使用簡體中文（例：用「軟體」不用「软件」，用「記憶體」不用「内存」）\n"
             "4. 使用台灣用語：軟體、網路、記憶體、程式、伺服器、資料庫、影片、滑鼠、設定、訊息\n"
             "5. 專有名詞維持英文原文（如 iPhone、API、Kubernetes、GitHub）；人名維持原文，除非是確定的知名中文人名\n"
             "6. 只輸出一行書面語中文，不要輸出粵語原文、拼音、解釋、替代版本\n"
-            "7. 只能包含繁體中文；只有專有名詞、產品名、縮寫可保留英文，禁止英文動詞、介系詞或整句英文（例：不要寫「主要 discussing」，要寫「主要討論」）\n"
+            "7. 只能包含繁體中文；只有專有名詞、產品名、縮寫可保留英文，禁止英文動詞、副詞、介系詞或整句英文"
+            "（例：不要寫「主要 discussing」「NIGHTLY fulfilling」，要寫「主要討論」「盡量滿足」）\n"
             "8. 禁止添加任何評論、括號註解、翻譯說明（如「此句不完整」「無法翻譯」等）\n"
             "9. 即使原文不完整或語意不清，也直接改寫，不要跳過或加說明\n"
             "10. 直接輸出結果，不要使用 <think> 標籤或任何思考過程\n"
@@ -5003,7 +5260,7 @@ class OllamaTranslator:
                 prompt += f"粵：{src}\n書面語：{dst}\n"
         prompt += (
             "\n再次提醒：輸出必須全部是繁體中文；英文只能出現在專有名詞、產品名、縮寫，"
-            "不要用 discuss、update、confirm 等英文動詞。\n"
+            "不要用 discuss、update、confirm、fulfill、refresh、nightly 等英文動詞或副詞。\n"
         )
         prompt += f"\n請改成書面語：{text}"
         return prompt
@@ -9447,6 +9704,10 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
     _PROMPT_LEAK_TEXTS = {"以下是繁體中文語音內容", "請使用繁體中文輸出", "請使用繁體中文",
                           "以下是繁体中文语音内容", "请使用繁体中文输出", "请使用繁体中文",
                           "以下は日本語の音声です"}
+    # 粵語即時模式遇到華語段落時，延遲載入一般中文模型補正（僅粵語模式使用）
+    _fw_general_model = [None]
+    _fw_general_lock = threading.Lock()
+    _fw_general_notice = [False]
 
     def local_transcribe(wav_path):
         """用 mlx-whisper / faster-whisper 辨識 WAV 檔，回傳 (segments_list, full_text, proc_time)"""
@@ -9483,6 +9744,50 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
                     segments.append({"start": seg.start, "end": seg.end, "text": text})
                     texts.append(text)
         full_text = " ".join(texts)
+
+        # 粵語模式：若這一段其實是華語，粵語微調模型會輸出偏離原意的內容。
+        # 改用一般中文模型重跑同一個音訊檔；純粵語段落不會觸發。
+        if (not use_mlx and _is_yue_mode(mode)
+                and _looks_like_mandarin(full_text)):
+            try:
+                if _fw_general_model[0] is None:
+                    with _fw_general_lock:
+                        if _fw_general_model[0] is None:
+                            print(f"  {C_DIM}[粵語模式] 偵測到華語段落，"
+                                  f"載入 {YUE_FALLBACK_MODEL} 補正...{RESET}",
+                                  flush=True)
+                            _fw_general_model[0] = _call_with_ssl_retry(
+                                _FwModel, _resolve_fw_model(YUE_FALLBACK_MODEL),
+                                **_fw_device_kwargs())
+                if _fw_general_model[0] is not None:
+                    general_iter, _general_info = _fw_general_model[0].transcribe(
+                        wav_path, language="zh", beam_size=5, vad_filter=True)
+                    general_segments = []
+                    general_texts = []
+                    for seg in general_iter:
+                        text = seg.text.strip()
+                        if text:
+                            general_segments.append({
+                                "start": seg.start,
+                                "end": seg.end,
+                                "text": text,
+                                "lang": "zh",
+                            })
+                            general_texts.append(text)
+                    if general_segments:
+                        if not _fw_general_notice[0]:
+                            _fw_general_notice[0] = True
+                            print(f"  {C_OK}[粵語模式] 已自動改用 "
+                                  f"{YUE_FALLBACK_MODEL} 辨識華語段落{RESET}",
+                                  flush=True)
+                        segments = general_segments
+                        texts = general_texts
+                        full_text = " ".join(texts)
+            except Exception as e:
+                print(f"  {C_DIM}[粵語模式] 華語段落補正失敗"
+                      f"（{type(e).__name__}: {e}），保留原結果{RESET}",
+                      flush=True)
+
         proc_time = time.monotonic() - t0
         return segments, full_text, proc_time
 
@@ -9625,22 +9930,28 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
                 for seg in segments:
                     text = seg.get("text", "").strip()
                     if text:
-                        lines.append(text)
+                        lines.append((text, seg.get("lang")))
             else:
-                lines = [full_text]
-            for line in lines:
+                lines = [(full_text, None)]
+            for line, seg_lang in lines:
                 if not line:
                     continue
                 if mode in _ZH_INPUT_MODES or _is_yue_mode(mode):
                     line = _s2twp_safe(line)
                 if hallucination_check(line):
                     continue
+                _seg_is_zh = (seg_lang == "zh")
+                _line_label = "中" if (_seg_is_zh and _is_yue_mode(mode)) else src_label
                 if _is_yue_mode(mode):
-                    # 重疊窗只顯示/翻譯新增內容；裁切點要求在標點上，
-                    # 避免把「計劃」切成「劃」而讓 LLM 翻錯
+                    # 重疊窗只顯示/翻譯新增內容。yue2zh 的裁切點要求在標點上，
+                    # 避免把「計劃」切成「劃」而讓 LLM 翻錯；純轉錄則可裁在中間。
                     _cur_full = line
+                    # 完全重複的整句直接跳過，避免重疊窗在沒有標點時反覆輸出。
+                    if line in yue_prev_full[0]:
+                        continue
                     line = _trim_stream_overlap(
-                        yue_prev_full[0], line, require_boundary=True,
+                        yue_prev_full[0], line,
+                        require_boundary=(mode == "yue2zh"),
                     )
                     yue_prev_full[0] = (yue_prev_full[0] + " " + _cur_full)[-4000:]
                     if not line:
@@ -9649,7 +9960,8 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
                     if is_duplicate(line):
                         continue
                     recent_texts.append(line.lower().strip())
-                if mode in _TRANSLATE_MODES and translator:
+                if (mode in _TRANSLATE_MODES and translator
+                        and not (mode == "yue2zh" and _seg_is_zh)):
                     seq = _trans_seq[0]; _trans_seq[0] += 1
                     threading.Thread(
                         target=translate_and_print,
@@ -9658,15 +9970,15 @@ def run_stream_local_whisper(capture_id: int, translator, model_name: str,
                     ).start()
                 else:
                     with print_lock:
-                        print(f"{src_color}{BOLD}[{src_label}] {line}{RESET}", flush=True)
+                        print(f"{src_color}{BOLD}[{_line_label}] {line}{RESET}", flush=True)
                         print(flush=True)
                         _status_bar_state["count"] += 1
                         refresh_status_bar()
                     timestamp = time.strftime("%H:%M:%S")
                     with open(log_path, "a", encoding="utf-8") as log_f:
-                        log_f.write(f"[{timestamp}] [{src_label}] {line}\n\n")
+                        log_f.write(f"[{timestamp}] [{_line_label}] {line}\n\n")
                     _webui_send({"type": "transcription", "source": "main",
-                                 "src_lang": src_label, "src_text": line,
+                                 "src_lang": _line_label, "src_text": line,
                                  "asr_time": round(proc_time, 1), "timestamp": timestamp})
 
     # ── 清理 ──
@@ -15661,6 +15973,15 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
             try: del segments_iter, info, model
             except NameError: pass
 
+        # 粵語模式：偵測混合在錄音中的華語段落，改用一般中文模型補正。
+        # 必須在增益暫存檔刪除前執行，且此時粵語模型已釋放，避免同時佔用兩份 VRAM。
+        if _is_yue_mode(mode) and raw_segments:
+            raw_segments, _yue_fixed = _yue_fallback_offline(
+                raw_segments, asr_wav_path, use_loose)
+            if _yue_fixed:
+                _webui_send({"type": "progress", "stage": "語言補正",
+                             "detail": f"已補正 {_yue_fixed} 段華語內容"})
+
     # 清理增益暫存檔（辨識結束後）
     if _boosted and asr_wav_path != wav_path:
         try:
@@ -15697,6 +16018,7 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
                 "start": seg_raw["start"],
                 "end": seg_raw["end"],
                 "text": text,
+                "lang": seg_raw.get("lang"),
             })
 
         t_asr_elapsed = time.monotonic() - t_stage
@@ -15777,15 +16099,23 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
                     spk_tag_log = f"[Speaker {spk_num}] "
 
                 seg_lines = []  # 本段的行資料
+                _seg_is_zh = (seg.get("lang") == "zh")
+                _src_label_seg = "中" if (_seg_is_zh and _is_yue_mode(mode)) else src_label
 
                 if need_translate and translator:
                     _print_with_badge(
-                        f"{src_color}{ts_tag} {spk_tag_term}[{src_label}] {text}{RESET}",
+                        f"{src_color}{ts_tag} {spk_tag_term}[{_src_label_seg}] {text}{RESET}",
                         C_BADGE_ASR, _avg_asr_per_seg, "辨")
 
                     t0 = time.monotonic()
-                    result = translator.translate(text)
-                    elapsed = time.monotonic() - t0
+                    if mode == "yue2zh" and _seg_is_zh:
+                        # 這段是華語，已經是繁體中文；不需要再送 LLM 改寫，
+                        # 以免 qwen 把「華語」硬翻成粵語或插入英文。
+                        result = _s2twp_safe(text)
+                        elapsed = 0.0
+                    else:
+                        result = translator.translate(text)
+                        elapsed = time.monotonic() - t0
 
                     if result:
                         result = _s2twp_safe(result) if (mode == "yue2zh" or not isinstance(translator, OllamaTranslator)) else _to_traditional(result)
@@ -15794,28 +16124,28 @@ def process_audio_file(input_path, mode, translator, model_size="large-v3-turbo"
                             _speed_badge_color(elapsed), elapsed, "譯")
                         print(flush=True)
 
-                        log_f.write(f"{ts_tag} {spk_tag_log}[{src_label}] {text}\n")
+                        log_f.write(f"{ts_tag} {spk_tag_log}[{_src_label_seg}] {text}\n")
                         log_f.write(f"{ts_tag} {spk_tag_log}[{dst_label}] {result}\n\n")
                         _webui_send({"type": "transcription", "source": "main",
-                                     "src_lang": src_label, "src_text": text,
+                                     "src_lang": _src_label_seg, "src_text": text,
                                      "dst_lang": dst_label, "dst_text": result,
                                      "asr_time": round(_avg_asr_per_seg, 1),
                                      "translate_time": round(elapsed, 1),
                                      "timestamp": ts_tag,
                                      "speaker": spk_num_val})
-                        seg_lines.append({"label": src_label, "text": text})
+                        seg_lines.append({"label": _src_label_seg, "text": text})
                         seg_lines.append({"label": dst_label, "text": result})
                     else:
                         print(flush=True)
-                        log_f.write(f"{ts_tag} {spk_tag_log}[{src_label}] {text}\n\n")
-                        seg_lines.append({"label": src_label, "text": text})
+                        log_f.write(f"{ts_tag} {spk_tag_log}[{_src_label_seg}] {text}\n\n")
+                        seg_lines.append({"label": _src_label_seg, "text": text})
                 else:
-                    print(f"{src_color}{BOLD}{ts_tag} {spk_tag_term}[{src_label}] {text}{RESET}", flush=True)
+                    print(f"{src_color}{BOLD}{ts_tag} {spk_tag_term}[{_src_label_seg}] {text}{RESET}", flush=True)
                     print(flush=True)
-                    log_f.write(f"{ts_tag} {spk_tag_log}[{src_label}] {text}\n\n")
-                    seg_lines.append({"label": src_label, "text": text})
+                    log_f.write(f"{ts_tag} {spk_tag_log}[{_src_label_seg}] {text}\n\n")
+                    seg_lines.append({"label": _src_label_seg, "text": text})
                     _webui_send({"type": "transcription", "source": "main",
-                                 "src_lang": src_label, "src_text": text,
+                                 "src_lang": _src_label_seg, "src_text": text,
                                  "asr_time": round(_avg_asr_per_seg, 1),
                                  "timestamp": ts_tag,
                                  "speaker": spk_num_val})

@@ -18,6 +18,9 @@ The original project is developed by **Jason Cheng (Jason Tools)**. He originall
 - `yue` — Cantonese speech to a Traditional Chinese colloquial transcript (preserves 冇, 嘅, 咗).
 - `yue2zh` — Cantonese speech to Traditional Chinese written Chinese, using a local LLM.
 - Uses `yue-whisper-turbo` locally through faster-whisper.
+- Automatically handles mixed-language meetings: if a passage is actually Mandarin, it is re-transcribed with `large-v3-turbo` instead of being forced into Cantonese. Those passages are labelled `[中]`; Cantonese passages stay `[粵]`.
+- In `yue2zh`, passages already in Mandarin are kept as Traditional Chinese without an unnecessary LLM rewrite.
+- Audio gain preserves peak headroom, avoiding clipping on quiet meeting recordings.
 - Selectable from both the WebUI and the command line.
 - Includes guidance for capturing Microsoft Teams / Zoom system audio with WASAPI Loopback.
 
